@@ -65,7 +65,7 @@ jobs:
           echo "Virtual display:"
           xdpyinfo -display :99 | grep dimensions
 
-          # Start Openbox window manager.
+          # Start Openbox so Chrome can be maximized reliably.
           openbox \
             --config-file /etc/xdg/openbox/rc.xml \
             >/tmp/openbox.log 2>&1 &
@@ -88,6 +88,7 @@ jobs:
 
           sleep 3
 
+          # Create a virtual sink for Chrome audio.
           pactl load-module \
             module-null-sink \
             sink_name=TikTokSink \
@@ -110,6 +111,11 @@ jobs:
 
           export DISPLAY=:99
 
+          WEBSITE_URL="https://livespherev3.gamer.gd/?i=1"
+
+          echo "Launching:"
+          echo "$WEBSITE_URL"
+
           google-chrome \
             --no-sandbox \
             --disable-dev-shm-usage \
@@ -125,9 +131,9 @@ jobs:
             --enable-webgl \
             --enable-gpu-rasterization \
             --enable-zero-copy \
-            "https://livespherev3.gamer.gd/?i=1" &
+            "$WEBSITE_URL" &
 
-          echo "Waiting for Chrome..."
+          echo "Waiting for Chrome and webpage..."
           sleep 15
 
           echo "Chrome windows:"
@@ -148,14 +154,14 @@ jobs:
 
           echo "Chrome window ID: $CHROME_WINDOW"
 
-          # Move Chrome to top-left.
+          # Move Chrome to the top-left corner.
           xdotool windowmove \
             "$CHROME_WINDOW" \
             0 0
 
           sleep 2
 
-          # Maximize Chrome using Openbox.
+          # Maximize using Openbox.
           xdotool key \
             --window "$CHROME_WINDOW" \
             alt+F10
@@ -169,11 +175,34 @@ jobs:
           echo "FINAL display geometry:"
           xdpyinfo -display :99 | grep dimensions
 
-          # Focus webpage.
+          # -----------------------------------------------------
+          # Give the webpage time to initialize.
+          # -----------------------------------------------------
+          sleep 5
+
+          # -----------------------------------------------------
+          # Real mouse interaction.
+          #
+          # The webpage does not have a button, but its audio
+          # requires a browser user gesture. Clicking the page
+          # provides that gesture.
+          # -----------------------------------------------------
+          echo "Sending first webpage click..."
+
+          xdotool mousemove 540 960
+          xdotool click 1
+
+          sleep 2
+
+          echo "Sending second webpage click..."
+
           xdotool mousemove 540 960
           xdotool click 1
 
           sleep 5
+
+          echo "PulseAudio sink inputs after webpage interaction:"
+          pactl list short sink-inputs || true
 
       # =========================================================
       # 6. Capture exactly what FFmpeg will see
@@ -194,7 +223,11 @@ jobs:
           echo "Screenshot created:"
           ls -lh /tmp/webpage.png
 
+          echo "Image information:"
           identify /tmp/webpage.png
+
+          echo "Final PulseAudio sink inputs:"
+          pactl list short sink-inputs || true
 
       # =========================================================
       # 7. Upload diagnostic screenshot
@@ -213,6 +246,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          WEBSITE_URL="https://livespherev3.gamer.gd/?i=1"
+
           RESTREAM_URL="rtmp://london.restream.io/live"
 
           # QUICK TEST KEY
@@ -223,12 +258,20 @@ jobs:
           echo "========================================"
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
-          echo "Website: https://livespherev3.gamer.gd/?i=1"
-          echo "Server: $RESTREAM_URL"
+          echo "Website:    $WEBSITE_URL"
+          echo "Server:     $RESTREAM_URL"
           echo "Resolution: 1080x1920"
-          echo "FPS: 30"
-          echo "Duration: 3 minutes"
+          echo "FPS:        30"
+          echo "Duration:   3 minutes"
           echo "========================================"
+
+          echo "PulseAudio sources:"
+          pactl list short sources
+
+          echo "PulseAudio sink inputs:"
+          pactl list short sink-inputs || true
+
+          echo "Starting FFmpeg..."
 
           ffmpeg \
             -hide_banner \
