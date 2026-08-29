@@ -189,7 +189,7 @@ jobs:
           echo "========================================"
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
-          echo "Website: https://www.wikipedia.org/"
+          echo "Website: https://livespherev3.gamer.gd/"
           echo "Server: $RESTREAM_URL"
           echo "Resolution: 1080x1920"
           echo "FPS: 30"
