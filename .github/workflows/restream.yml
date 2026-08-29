@@ -1,3 +1,4 @@
+```yaml
 name: Public Website 3-Minute Restream Test
 
 "on":
@@ -7,6 +8,13 @@ jobs:
   stream:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    env:
+      DISPLAY: :99
+      SCREEN_WIDTH: 1080
+      SCREEN_HEIGHT: 1920
+      SCREEN_FPS: 30
+      PULSE_SINK: TikTokSink
 
     steps:
 
@@ -45,7 +53,7 @@ jobs:
           google-chrome --version
 
       # =========================================================
-      # 3. Start virtual display + window manager
+      # 3. Start Xvfb + Openbox
       # =========================================================
       - name: Start virtual display
         run: |
@@ -53,42 +61,60 @@ jobs:
 
           export DISPLAY=:99
 
+          echo "Starting Xvfb..."
+
           Xvfb :99 \
             -screen 0 1080x1920x24 \
             -ac \
             +extension GLX \
+            +extension RANDR \
             +render \
-            -noreset &
+            -noreset \
+            >/tmp/xvfb.log 2>&1 &
 
-          sleep 4
+          sleep 5
 
-          echo "Virtual display:"
+          echo "Checking X display..."
           xdpyinfo -display :99 | grep dimensions
 
-          # Start Openbox so Chrome can be maximized reliably.
+          echo "Disabling screen blanking/power management..."
+
+          xset -display :99 s off || true
+          xset -display :99 -dpms || true
+          xset -display :99 s noblank || true
+
+          echo "Starting Openbox..."
+
           openbox \
             --config-file /etc/xdg/openbox/rc.xml \
             >/tmp/openbox.log 2>&1 &
 
-          sleep 3
+          sleep 4
 
-          echo "Openbox:"
+          echo "Openbox process:"
           pgrep -a openbox || true
 
       # =========================================================
-      # 4. Start virtual audio
+      # 4. Start virtual PulseAudio
       # =========================================================
       - name: Start virtual audio
         run: |
           set -eux
 
+          echo "Starting PulseAudio..."
+
           pulseaudio \
             --start \
-            --exit-idle-time=-1
+            --exit-idle-time=-1 \
+            --daemonize=true
 
-          sleep 3
+          sleep 4
 
-          # Create a virtual sink for Chrome audio.
+          echo "PulseAudio information:"
+          pactl info
+
+          echo "Creating virtual streaming sink..."
+
           pactl load-module \
             module-null-sink \
             sink_name=TikTokSink \
@@ -96,25 +122,43 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "Audio sinks:"
+          echo "========================================"
+          echo "AUDIO SINKS"
+          echo "========================================"
+
           pactl list short sinks
 
-          echo "Audio sources:"
+          echo "========================================"
+          echo "AUDIO SOURCES"
+          echo "========================================"
+
           pactl list short sources
 
+          echo "========================================"
+          echo "DEFAULT SINK"
+          echo "========================================"
+
+          pactl get-default-sink
+
+          echo "========================================"
+          echo "VERIFY MONITOR"
+          echo "========================================"
+
+          pactl list short sources | grep "TikTokSink.monitor"
+
+          echo "Virtual audio is ready."
+
       # =========================================================
-      # 5. Launch public webpage
+      # 5. Launch Chrome renderer
       # =========================================================
       - name: Launch public webpage
         run: |
           set -eux
 
           export DISPLAY=:99
+          export PULSE_SINK=TikTokSink
 
-          WEBSITE_URL="https://livespherev3.gamer.gd/?i=1"
-
-          echo "Launching:"
-          echo "$WEBSITE_URL"
+          echo "Launching Chrome renderer..."
 
           google-chrome \
             --no-sandbox \
@@ -122,21 +166,42 @@ jobs:
             --no-first-run \
             --no-default-browser-check \
             --disable-infobars \
+            --disable-session-crashed-bubble \
+            --disable-popup-blocking \
+            --disable-translate \
+            \
             --autoplay-policy=no-user-gesture-required \
-            --force-device-scale-factor=1 \
-            --window-size=1080,1920 \
-            --window-position=0,0 \
-            --user-data-dir=/tmp/chrome-profile \
-            --ignore-certificate-errors \
+            \
+            --disable-background-timer-throttling \
+            --disable-backgrounding-occluded-windows \
+            --disable-renderer-backgrounding \
+            --disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
+            \
             --enable-webgl \
             --enable-gpu-rasterization \
             --enable-zero-copy \
-            "$WEBSITE_URL" &
+            \
+            --force-device-scale-factor=1 \
+            --window-size=1080,1920 \
+            --window-position=0,0 \
+            --start-maximized \
+            --kiosk \
+            \
+            --user-data-dir=/tmp/chrome-profile \
+            --ignore-certificate-errors \
+            \
+            "https://livespherev3.gamer.gd/?i=1" \
+            >/tmp/chrome.log 2>&1 &
 
-          echo "Waiting for Chrome and webpage..."
-          sleep 15
+          echo "Chrome launched."
 
-          echo "Chrome windows:"
+          echo "Waiting for webpage initialization..."
+          sleep 20
+
+          echo "========================================"
+          echo "CHROME WINDOWS"
+          echo "========================================"
+
           xdotool search \
             --onlyvisible \
             --class "google-chrome" \
@@ -149,63 +214,72 @@ jobs:
 
           if [ -z "$CHROME_WINDOW" ]; then
             echo "ERROR: Chrome window not found"
+            echo "===== CHROME LOG ====="
+            cat /tmp/chrome.log || true
             exit 1
           fi
 
           echo "Chrome window ID: $CHROME_WINDOW"
 
-          # Move Chrome to the top-left corner.
+          # Put Chrome at the origin.
           xdotool windowmove \
             "$CHROME_WINDOW" \
-            0 0
+            0 0 || true
+
+          sleep 3
+
+          # Keep Chrome focused and visible.
+          xdotool windowactivate \
+            "$CHROME_WINDOW" || true
+
+          sleep 3
+
+          # Move pointer into the webpage.
+          xdotool mousemove 540 960
 
           sleep 2
 
-          # Maximize using Openbox.
-          xdotool key \
-            --window "$CHROME_WINDOW" \
-            alt+F10
+          # Give the webpage a normal click event.
+          xdotool click 1 || true
 
-          sleep 10
+          sleep 8
 
-          echo "FINAL Chrome geometry:"
+          echo "========================================"
+          echo "FINAL CHROME GEOMETRY"
+          echo "========================================"
+
           xdotool getwindowgeometry \
-            "$CHROME_WINDOW"
+            "$CHROME_WINDOW" || true
 
-          echo "FINAL display geometry:"
+          echo "========================================"
+          echo "DISPLAY GEOMETRY"
+          echo "========================================"
+
           xdpyinfo -display :99 | grep dimensions
 
-          # -----------------------------------------------------
-          # Give the webpage time to initialize.
-          # -----------------------------------------------------
-          sleep 5
+          echo "========================================"
+          echo "CHROME PROCESS"
+          echo "========================================"
 
-          # -----------------------------------------------------
-          # Real mouse interaction.
-          #
-          # The webpage does not have a button, but its audio
-          # requires a browser user gesture. Clicking the page
-          # provides that gesture.
-          # -----------------------------------------------------
-          echo "Sending first webpage click..."
-
-          xdotool mousemove 540 960
-          xdotool click 1
-
-          sleep 2
-
-          echo "Sending second webpage click..."
-
-          xdotool mousemove 540 960
-          xdotool click 1
-
-          sleep 5
-
-          echo "PulseAudio sink inputs after webpage interaction:"
-          pactl list short sink-inputs || true
+          pgrep -a chrome || true
 
       # =========================================================
-      # 6. Capture exactly what FFmpeg will see
+      # 6. Allow JavaScript renderer to stabilize
+      # =========================================================
+      - name: Stabilize webpage renderer
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          echo "Allowing JavaScript animation systems to run..."
+
+          sleep 15
+
+          echo "Renderer stabilization complete."
+
+      # =========================================================
+      # 7. Verify video rendering
       # =========================================================
       - name: Verify webpage before streaming
         run: |
@@ -213,7 +287,9 @@ jobs:
 
           export DISPLAY=:99
 
-          echo "Capturing X display..."
+          echo "========================================"
+          echo "CAPTURING CURRENT X DISPLAY"
+          echo "========================================"
 
           import \
             -display :99 \
@@ -226,11 +302,10 @@ jobs:
           echo "Image information:"
           identify /tmp/webpage.png
 
-          echo "Final PulseAudio sink inputs:"
-          pactl list short sink-inputs || true
+          echo "Display check complete."
 
       # =========================================================
-      # 7. Upload diagnostic screenshot
+      # 8. Upload diagnostic screenshot
       # =========================================================
       - name: Upload webpage screenshot
         uses: actions/upload-artifact@v4
@@ -240,13 +315,55 @@ jobs:
           if-no-files-found: error
 
       # =========================================================
-      # 8. Stream to Restream
+      # 9. Verify audio is actually reaching PulseAudio
+      # =========================================================
+      - name: Verify audio pipeline
+        run: |
+          set -eux
+
+          echo "========================================"
+          echo "AUDIO PIPELINE TEST"
+          echo "========================================"
+
+          echo "Available sinks:"
+          pactl list short sinks
+
+          echo "Available sources:"
+          pactl list short sources
+
+          echo "Default sink:"
+          pactl get-default-sink
+
+          echo "Checking monitor:"
+          pactl list short sources | grep "TikTokSink.monitor"
+
+          echo "Starting 5-second FFmpeg audio-level test..."
+
+          timeout 5 ffmpeg \
+            -hide_banner \
+            -loglevel info \
+            -f pulse \
+            -i TikTokSink.monitor \
+            -af volumedetect \
+            -f null \
+            - \
+            2>&1 | tee /tmp/audio-test.log || true
+
+          echo "========================================"
+          echo "AUDIO TEST COMPLETE"
+          echo "========================================"
+
+          cat /tmp/audio-test.log || true
+
+      # =========================================================
+      # 10. Stream to Restream
       # =========================================================
       - name: Stream to Restream
         run: |
           set -euo pipefail
 
-          WEBSITE_URL="https://livespherev3.gamer.gd/?i=1"
+          export DISPLAY=:99
+          export PULSE_SINK=TikTokSink
 
           RESTREAM_URL="rtmp://london.restream.io/live"
 
@@ -258,48 +375,58 @@ jobs:
           echo "========================================"
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
-          echo "Website:    $WEBSITE_URL"
-          echo "Server:     $RESTREAM_URL"
+          echo "Website: https://livespherev3.gamer.gd/?i=1"
+          echo "Server: $RESTREAM_URL"
           echo "Resolution: 1080x1920"
-          echo "FPS:        30"
-          echo "Duration:   3 minutes"
+          echo "FPS: 30"
+          echo "Duration: 3 minutes"
           echo "========================================"
 
-          echo "PulseAudio sources:"
-          pactl list short sources
+          echo "Checking X display..."
+          xdpyinfo -display :99 | grep dimensions
 
-          echo "PulseAudio sink inputs:"
-          pactl list short sink-inputs || true
+          echo "Checking audio monitor..."
+          pactl list short sources | grep "TikTokSink.monitor"
 
           echo "Starting FFmpeg..."
 
           ffmpeg \
             -hide_banner \
             -loglevel info \
+            \
             -f x11grab \
-            -video_size 1080x1920 \
-            -framerate 30 \
             -draw_mouse 0 \
+            -framerate 30 \
+            -video_size 1080x1920 \
             -i :99.0 \
+            \
             -f pulse \
             -i TikTokSink.monitor \
+            \
             -map 0:v:0 \
             -map 1:a:0 \
+            \
             -c:v libx264 \
             -preset ultrafast \
             -tune zerolatency \
             -pix_fmt yuv420p \
+            \
             -r 30 \
             -b:v 2500k \
             -maxrate 3000k \
             -bufsize 6000k \
+            \
             -g 60 \
             -keyint_min 60 \
             -sc_threshold 0 \
+            \
             -c:a aac \
             -b:a 128k \
             -ar 44100 \
             -ac 2 \
+            \
             -t 180 \
+            \
             -f flv \
             "$TARGET"
+```
