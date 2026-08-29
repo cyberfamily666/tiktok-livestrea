@@ -36,7 +36,9 @@ jobs:
             pulseaudio-utils \
             wget \
             x11-utils \
-            imagemagick
+            imagemagick \
+            curl \
+            jq
 
       # =========================================================
       # 2. Install Google Chrome
@@ -53,15 +55,13 @@ jobs:
           google-chrome --version
 
       # =========================================================
-      # 3. Start Xvfb + Openbox
+      # 3. Start virtual display
       # =========================================================
       - name: Start virtual display
         run: |
           set -eux
 
           export DISPLAY=:99
-
-          echo "Starting Xvfb..."
 
           Xvfb :99 \
             -screen 0 1080x1920x24 \
@@ -74,16 +74,12 @@ jobs:
 
           sleep 5
 
-          echo "Checking X display..."
+          echo "DISPLAY:"
           xdpyinfo -display :99 | grep dimensions
-
-          echo "Disabling screen blanking/power management..."
 
           xset -display :99 s off || true
           xset -display :99 -dpms || true
           xset -display :99 s noblank || true
-
-          echo "Starting Openbox..."
 
           openbox \
             --config-file /etc/xdg/openbox/rc.xml \
@@ -91,17 +87,15 @@ jobs:
 
           sleep 4
 
-          echo "Openbox process:"
+          echo "Openbox:"
           pgrep -a openbox || true
 
       # =========================================================
-      # 4. Start virtual PulseAudio
+      # 4. Start virtual audio
       # =========================================================
       - name: Start virtual audio
         run: |
           set -eux
-
-          echo "Starting PulseAudio..."
 
           pulseaudio \
             --start \
@@ -110,11 +104,6 @@ jobs:
 
           sleep 4
 
-          echo "PulseAudio information:"
-          pactl info
-
-          echo "Creating virtual streaming sink..."
-
           pactl load-module \
             module-null-sink \
             sink_name=TikTokSink \
@@ -122,43 +111,29 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "========================================"
-          echo "AUDIO SINKS"
-          echo "========================================"
-
+          echo "===== SINKS ====="
           pactl list short sinks
 
-          echo "========================================"
-          echo "AUDIO SOURCES"
-          echo "========================================"
-
+          echo "===== SOURCES ====="
           pactl list short sources
 
-          echo "========================================"
-          echo "DEFAULT SINK"
-          echo "========================================"
-
+          echo "===== DEFAULT ====="
           pactl get-default-sink
 
-          echo "========================================"
-          echo "VERIFY MONITOR"
-          echo "========================================"
-
+          echo "===== MONITOR ====="
           pactl list short sources | grep "TikTokSink.monitor"
 
-          echo "Virtual audio is ready."
-
       # =========================================================
-      # 5. Launch Chrome renderer
+      # 5. Launch Chrome with DevTools
       # =========================================================
-      - name: Launch public webpage
+      - name: Launch Chrome renderer
         run: |
           set -eux
 
           export DISPLAY=:99
           export PULSE_SINK=TikTokSink
 
-          echo "Launching Chrome renderer..."
+          rm -rf /tmp/chrome-profile
 
           google-chrome \
             --no-sandbox \
@@ -168,7 +143,6 @@ jobs:
             --disable-infobars \
             --disable-session-crashed-bubble \
             --disable-popup-blocking \
-            --disable-translate \
             \
             --autoplay-policy=no-user-gesture-required \
             \
@@ -187,25 +161,37 @@ jobs:
             --start-maximized \
             --kiosk \
             \
+            --remote-debugging-port=9222 \
+            --remote-debugging-address=127.0.0.1 \
+            \
             --user-data-dir=/tmp/chrome-profile \
             --ignore-certificate-errors \
             \
             "https://livespherev3.gamer.gd/?i=1" \
             >/tmp/chrome.log 2>&1 &
 
-          echo "Chrome launched."
+          echo "Waiting for Chrome DevTools..."
 
-          echo "Waiting for webpage initialization..."
-          sleep 20
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9222/json >/tmp/chrome-tabs.json; then
+              echo "Chrome DevTools is ready."
+              break
+            fi
+            sleep 1
+          done
 
-          echo "========================================"
-          echo "CHROME WINDOWS"
-          echo "========================================"
+          cat /tmp/chrome-tabs.json
 
-          xdotool search \
-            --onlyvisible \
-            --class "google-chrome" \
-            getwindowgeometry %@ || true
+          sleep 15
+
+      # =========================================================
+      # 6. Find Chrome window and focus it
+      # =========================================================
+      - name: Focus Chrome renderer
+        run: |
+          set -eux
+
+          export DISPLAY=:99
 
           CHROME_WINDOW=$(xdotool search \
             --onlyvisible \
@@ -213,131 +199,338 @@ jobs:
             | head -n 1)
 
           if [ -z "$CHROME_WINDOW" ]; then
-            echo "ERROR: Chrome window not found"
-            echo "===== CHROME LOG ====="
+            echo "Chrome window not found."
             cat /tmp/chrome.log || true
             exit 1
           fi
 
-          echo "Chrome window ID: $CHROME_WINDOW"
+          echo "Chrome window: $CHROME_WINDOW"
 
-          # Put Chrome at the origin.
-          xdotool windowmove \
-            "$CHROME_WINDOW" \
-            0 0 || true
+          xdotool windowmove "$CHROME_WINDOW" 0 0 || true
+          xdotool windowactivate "$CHROME_WINDOW" || true
 
           sleep 3
 
-          # Keep Chrome focused and visible.
-          xdotool windowactivate \
-            "$CHROME_WINDOW" || true
-
-          sleep 3
-
-          # Move pointer into the webpage.
           xdotool mousemove 540 960
-
-          sleep 2
-
-          # Give the webpage a normal click event.
           xdotool click 1 || true
 
-          sleep 8
+          sleep 5
+
+          echo "Geometry:"
+          xdotool getwindowgeometry "$CHROME_WINDOW"
+
+      # =========================================================
+      # 7. Inspect the webpage through Chrome DevTools
+      # =========================================================
+      - name: Inspect JavaScript renderer
+        run: |
+          set -eux
 
           echo "========================================"
-          echo "FINAL CHROME GEOMETRY"
+          echo "CHROME TABS"
           echo "========================================"
 
-          xdotool getwindowgeometry \
-            "$CHROME_WINDOW" || true
+          cat /tmp/chrome-tabs.json
 
-          echo "========================================"
-          echo "DISPLAY GEOMETRY"
-          echo "========================================"
+          DEBUG_URL=$(jq -r '
+            .[]
+            | select(.type=="page")
+            | .webSocketDebuggerUrl
+          ' /tmp/chrome-tabs.json | head -n 1)
 
-          xdpyinfo -display :99 | grep dimensions
+          if [ -z "$DEBUG_URL" ] || [ "$DEBUG_URL" = "null" ]; then
+            echo "ERROR: Could not find Chrome DevTools websocket."
+            exit 1
+          fi
 
-          echo "========================================"
-          echo "CHROME PROCESS"
-          echo "========================================"
+          echo "DevTools endpoint found."
 
+          # Install a small WebSocket client.
+          python3 -m pip install --quiet websocket-client
+
+          cat >/tmp/inspect_chrome.py <<'PY'
+          import json
+          import time
+          import websocket
+
+          url = open("/tmp/debug_url").read().strip()
+
+          ws = websocket.create_connection(url, timeout=10)
+
+          counter = 0
+
+          def command(method, params=None):
+              global counter
+
+              counter += 1
+
+              message = {
+                  "id": counter,
+                  "method": method
+              }
+
+              if params is not None:
+                  message["params"] = params
+
+              ws.send(json.dumps(message))
+
+              while True:
+                  response = json.loads(ws.recv())
+
+                  if response.get("id") == counter:
+                      return response
+
+          # Enable runtime.
+          print("Enabling Runtime...")
+          print(command("Runtime.enable"))
+
+          # Enable Page.
+          print("Enabling Page...")
+          print(command("Page.enable"))
+
+          # Make the tab visible to Chrome's page lifecycle.
+          print("Setting lifecycle events...")
+          print(command("Page.setWebLifecycleState", {
+              "state": "active"
+          }))
+
+          # Inspect the application.
+          expression = r"""
+          (() => {
+              const result = {};
+
+              result.url = location.href;
+              result.visibilityState = document.visibilityState;
+              result.hidden = document.hidden;
+              result.readyState = document.readyState;
+
+              result.engineRunning =
+                  window.__LiveSphereEngineRunning ?? null;
+
+              result.frameCounter =
+                  window.__LiveSphereFrameCounter ?? null;
+
+              result.stageInitialized =
+                  window.__LiveSphereStageInitialized ?? null;
+
+              result.viewerCount =
+                  document.querySelectorAll(".viewer").length;
+
+              result.canvasCount =
+                  document.querySelectorAll("canvas").length;
+
+              result.bodyChildren =
+                  document.body ? document.body.children.length : 0;
+
+              result.audioCount =
+                  document.querySelectorAll("audio").length;
+
+              result.videoCount =
+                  document.querySelectorAll("video").length;
+
+              result.title =
+                  document.title;
+
+              return JSON.stringify(result);
+          })()
+          """
+
+          print("========================================")
+          print("PAGE RUNTIME STATE")
+          print("========================================")
+
+          result = command("Runtime.evaluate", {
+              "expression": expression,
+              "returnByValue": True,
+              "awaitPromise": True
+          })
+
+          print(json.dumps(result, indent=2))
+
+          # Give the renderer time to advance.
+          time.sleep(5)
+
+          print("========================================")
+          print("PAGE RUNTIME STATE AFTER 5 SECONDS")
+          print("========================================")
+
+          result2 = command("Runtime.evaluate", {
+              "expression": expression,
+              "returnByValue": True,
+              "awaitPromise": True
+          })
+
+          print(json.dumps(result2, indent=2))
+
+          ws.close()
+          PY
+
+          printf '%s' "$DEBUG_URL" >/tmp/debug_url
+
+          python3 /tmp/inspect_chrome.py
+
+      # =========================================================
+      # 8. Force page lifecycle active + trigger rendering
+      # =========================================================
+      - name: Activate webpage renderer
+        run: |
+          set -eux
+
+          DEBUG_URL=$(cat /tmp/debug_url)
+
+          cat >/tmp/activate_chrome.py <<'PY'
+          import json
+          import time
+          import websocket
+
+          url = open("/tmp/debug_url").read().strip()
+          ws = websocket.create_connection(url, timeout=10)
+
+          counter = 0
+
+          def command(method, params=None):
+              global counter
+
+              counter += 1
+
+              message = {
+                  "id": counter,
+                  "method": method
+              }
+
+              if params is not None:
+                  message["params"] = params
+
+              ws.send(json.dumps(message))
+
+              while True:
+                  response = json.loads(ws.recv())
+
+                  if response.get("id") == counter:
+                      return response
+
+          command("Runtime.enable")
+          command("Page.enable")
+
+          command("Page.setWebLifecycleState", {
+              "state": "active"
+          })
+
+          # This does NOT modify the hosted website.
+          # It only asks Chrome to evaluate runtime checks.
+          expression = r"""
+          (() => {
+              document.documentElement.style.setProperty(
+                  "--github-renderer-active",
+                  "1"
+              );
+
+              return {
+                  visibility: document.visibilityState,
+                  hidden: document.hidden,
+                  raf: typeof requestAnimationFrame,
+                  performanceNow: typeof performance.now
+              };
+          })()
+          """
+
+          print(command("Runtime.evaluate", {
+              "expression": expression,
+              "returnByValue": True
+          }))
+
+          time.sleep(2)
+
+          ws.close()
+          PY
+
+          python3 -m pip install --quiet websocket-client
+
+          python3 /tmp/activate_chrome.py
+
+      # =========================================================
+      # 9. Wait for renderer
+      # =========================================================
+      - name: Warm up renderer
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          echo "Warming up webpage..."
+
+          sleep 20
+
+          echo "Chrome processes:"
           pgrep -a chrome || true
 
+          echo "Display:"
+          xdpyinfo -display :99 | grep dimensions
+
       # =========================================================
-      # 6. Allow JavaScript renderer to stabilize
+      # 10. Capture diagnostic screenshots
       # =========================================================
-      - name: Stabilize webpage renderer
+      - name: Capture renderer diagnostics
         run: |
           set -eux
 
           export DISPLAY=:99
 
-          echo "Allowing JavaScript animation systems to run..."
-
-          sleep 15
-
-          echo "Renderer stabilization complete."
-
-      # =========================================================
-      # 7. Verify video rendering
-      # =========================================================
-      - name: Verify webpage before streaming
-        run: |
-          set -eux
-
-          export DISPLAY=:99
-
-          echo "========================================"
-          echo "CAPTURING CURRENT X DISPLAY"
-          echo "========================================"
+          echo "Capturing first frame..."
 
           import \
             -display :99 \
             -window root \
-            /tmp/webpage.png
+            /tmp/webpage-before.png
 
-          echo "Screenshot created:"
-          ls -lh /tmp/webpage.png
+          sleep 3
 
-          echo "Image information:"
-          identify /tmp/webpage.png
+          echo "Capturing second frame..."
 
-          echo "Display check complete."
+          import \
+            -display :99 \
+            -window root \
+            /tmp/webpage-after.png
+
+          identify \
+            /tmp/webpage-before.png \
+            /tmp/webpage-after.png
 
       # =========================================================
-      # 8. Upload diagnostic screenshot
+      # 11. Upload diagnostic frames
       # =========================================================
-      - name: Upload webpage screenshot
+      - name: Upload renderer diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: webpage-preview
-          path: /tmp/webpage.png
+          name: renderer-diagnostics
+          path: |
+            /tmp/webpage-before.png
+            /tmp/webpage-after.png
+            /tmp/chrome.log
+            /tmp/xvfb.log
+            /tmp/openbox.log
           if-no-files-found: error
 
       # =========================================================
-      # 9. Verify audio is actually reaching PulseAudio
+      # 12. Verify PulseAudio
       # =========================================================
       - name: Verify audio pipeline
         run: |
           set -eux
 
-          echo "========================================"
-          echo "AUDIO PIPELINE TEST"
-          echo "========================================"
-
-          echo "Available sinks:"
+          echo "===== AUDIO SINKS ====="
           pactl list short sinks
 
-          echo "Available sources:"
+          echo "===== AUDIO SOURCES ====="
           pactl list short sources
 
-          echo "Default sink:"
+          echo "===== DEFAULT SINK ====="
           pactl get-default-sink
 
-          echo "Checking monitor:"
+          echo "===== AUDIO MONITOR ====="
           pactl list short sources | grep "TikTokSink.monitor"
 
-          echo "Starting 5-second FFmpeg audio-level test..."
+          echo "===== FIVE SECOND AUDIO TEST ====="
 
           timeout 5 ffmpeg \
             -hide_banner \
@@ -349,14 +542,12 @@ jobs:
             - \
             2>&1 | tee /tmp/audio-test.log || true
 
-          echo "========================================"
-          echo "AUDIO TEST COMPLETE"
-          echo "========================================"
+          echo "===== AUDIO TEST RESULT ====="
 
           cat /tmp/audio-test.log || true
 
       # =========================================================
-      # 10. Stream to Restream
+      # 13. Stream to Restream
       # =========================================================
       - name: Stream to Restream
         run: |
@@ -367,7 +558,6 @@ jobs:
 
           RESTREAM_URL="rtmp://london.restream.io/live"
 
-          # QUICK TEST KEY
           RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
@@ -376,19 +566,10 @@ jobs:
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
           echo "Website: https://livespherev3.gamer.gd/?i=1"
-          echo "Server: $RESTREAM_URL"
           echo "Resolution: 1080x1920"
           echo "FPS: 30"
           echo "Duration: 3 minutes"
           echo "========================================"
-
-          echo "Checking X display..."
-          xdpyinfo -display :99 | grep dimensions
-
-          echo "Checking audio monitor..."
-          pactl list short sources | grep "TikTokSink.monitor"
-
-          echo "Starting FFmpeg..."
 
           ffmpeg \
             -hide_banner \
