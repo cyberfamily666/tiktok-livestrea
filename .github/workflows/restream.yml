@@ -27,7 +27,8 @@ jobs:
             pulseaudio \
             pulseaudio-utils \
             wget \
-            x11-utils
+            x11-utils \
+            imagemagick
 
       # =========================================================
       # 2. Install Google Chrome
@@ -111,9 +112,7 @@ jobs:
 
           google-chrome \
             --no-sandbox \
-            --disable-gpu \
             --disable-dev-shm-usage \
-            --disable-software-rasterizer \
             --no-first-run \
             --no-default-browser-check \
             --disable-infobars \
@@ -122,10 +121,14 @@ jobs:
             --window-size=1080,1920 \
             --window-position=0,0 \
             --user-data-dir=/tmp/chrome-profile \
-            "https://www.wikipedia.org/" &
+            --ignore-certificate-errors \
+            --enable-webgl \
+            --enable-gpu-rasterization \
+            --enable-zero-copy \
+            "https://livespherev3.gamer.gd/?i=1" &
 
           echo "Waiting for Chrome..."
-          sleep 12
+          sleep 15
 
           echo "Chrome windows:"
           xdotool search \
@@ -157,7 +160,7 @@ jobs:
             --window "$CHROME_WINDOW" \
             alt+F10
 
-          sleep 5
+          sleep 10
 
           echo "FINAL Chrome geometry:"
           xdotool getwindowgeometry \
@@ -170,10 +173,41 @@ jobs:
           xdotool mousemove 540 960
           xdotool click 1
 
-          sleep 3
+          sleep 5
 
       # =========================================================
-      # 6. Stream to Restream
+      # 6. Capture exactly what FFmpeg will see
+      # =========================================================
+      - name: Verify webpage before streaming
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          echo "Capturing X display..."
+
+          import \
+            -display :99 \
+            -window root \
+            /tmp/webpage.png
+
+          echo "Screenshot created:"
+          ls -lh /tmp/webpage.png
+
+          identify /tmp/webpage.png
+
+      # =========================================================
+      # 7. Upload diagnostic screenshot
+      # =========================================================
+      - name: Upload webpage screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: webpage-preview
+          path: /tmp/webpage.png
+          if-no-files-found: error
+
+      # =========================================================
+      # 8. Stream to Restream
       # =========================================================
       - name: Stream to Restream
         run: |
@@ -189,7 +223,7 @@ jobs:
           echo "========================================"
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
-          echo "Website: https://livespherev3.gamer.gd/"
+          echo "Website: https://livespherev3.gamer.gd/?i=1"
           echo "Server: $RESTREAM_URL"
           echo "Resolution: 1080x1920"
           echo "FPS: 30"
