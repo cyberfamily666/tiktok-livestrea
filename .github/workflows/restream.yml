@@ -9,10 +9,6 @@ jobs:
     timeout-minutes: 35
 
     steps:
-
-      # ============================================================
-      # 1. INSTALL DEPENDENCIES
-      # ============================================================
       - name: Install dependencies
         run: |
           set -eux
@@ -27,9 +23,6 @@ jobs:
             pulseaudio-utils \
             wget
 
-      # ============================================================
-      # 2. INSTALL GOOGLE CHROME
-      # ============================================================
       - name: Install Google Chrome
         run: |
           set -eux
@@ -41,9 +34,6 @@ jobs:
 
           google-chrome --version
 
-      # ============================================================
-      # 3. START 1080x1920 PORTRAIT DISPLAY
-      # ============================================================
       - name: Start virtual display
         run: |
           set -eux
@@ -55,17 +45,10 @@ jobs:
             -ac \
             +extension GLX \
             +render \
-            -noreset \
-            > /tmp/xvfb.log 2>&1 &
+            -noreset &
 
           sleep 4
 
-          echo "Virtual display started:"
-          xdpyinfo -display :99 | grep dimensions
-
-      # ============================================================
-      # 4. START VIRTUAL AUDIO
-      # ============================================================
       - name: Start virtual audio
         run: |
           set -eux
@@ -83,23 +66,14 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "Audio sinks:"
           pactl list short sinks
-
-          echo "Audio sources:"
           pactl list short sources
 
-      # ============================================================
-      # 5. OPEN THE ACTUAL LIVESPHERE PAGE
-      # ============================================================
-      - name: Launch LiveSphere webpage
+      - name: Launch webpage
         run: |
           set -eux
 
           export DISPLAY=:99
-
-          echo "Opening:"
-          echo "https://livespherev3.gamer.gd/?i=1"
 
           google-chrome \
             --no-sandbox \
@@ -110,114 +84,28 @@ jobs:
             --window-position=0,0 \
             --autoplay-policy=no-user-gesture-required \
             --user-data-dir=/tmp/chrome-profile \
-            "https://livespherev3.gamer.gd/?i=1" \
-            > /tmp/chrome.log 2>&1 &
+            "https://livespherev3.gamer.gd/?i=1" &
 
-          CHROME_PID=$!
-
-          echo "$CHROME_PID" > /tmp/chrome.pid
-
-          echo "Chrome PID: $CHROME_PID"
-
-          echo "Waiting 15 seconds for webpage..."
-
-          sleep 15
-
-          echo "========================================"
-          echo "CHROME PROCESS"
-          echo "========================================"
-
-          ps -p "$CHROME_PID" -f || true
-
-          echo "========================================"
-          echo "CHROME LOG"
-          echo "========================================"
-
-          cat /tmp/chrome.log || true
-
-          echo "========================================"
-          echo "VISIBLE WINDOWS"
-          echo "========================================"
-
-          xdotool search \
-            --onlyvisible \
-            --name ".*" \
-            getwindowname %@ || true
-
-          echo "========================================"
-          echo "CLICKING PAGE"
-          echo "========================================"
+          sleep 12
 
           xdotool mousemove 540 960
           xdotool click 1
 
-          echo "Click completed."
+          sleep 3
 
-          sleep 5
-
-          echo "========================================"
-          echo "AUDIO CONNECTIONS"
-          echo "========================================"
-
-          pactl list short sink-inputs || true
-
-          echo "========================================"
-          echo "CAPTURING 1080x1920 PREVIEW"
-          echo "========================================"
-
-          ffmpeg \
-            -y \
-            -f x11grab \
-            -video_size 1080x1920 \
-            -framerate 1 \
-            -i :99.0 \
-            -frames:v 1 \
-            -pix_fmt rgb24 \
-            /tmp/livesphere-preview.png
-
-          echo "Preview created:"
-          ls -lh /tmp/livesphere-preview.png
-
-      # ============================================================
-      # 6. UPLOAD THE SCREENSHOT AND LOG
-      # ============================================================
-      - name: Upload LiveSphere diagnostic files
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: livesphere-diagnostics
-          path: |
-            /tmp/livesphere-preview.png
-            /tmp/chrome.log
-            /tmp/xvfb.log
-          if-no-files-found: warn
-
-      # ============================================================
-      # 7. STREAM TO RESTREAM FOR 30 MINUTES
-      # ============================================================
       - name: Stream to Restream
         run: |
           set -euo pipefail
 
           RESTREAM_URL="rtmp://london.restream.io/live"
 
-          # ========================================================
-          # PUT YOUR CURRENT/NEW RESTREAM KEY HERE
-          # ========================================================
+          # Use your current Restream key here.
           RESTREAM_KEY="YOUR_RESTREAM_KEY"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
 
-          echo "========================================"
-          echo "STARTING 30-MINUTE STREAM"
-          echo "========================================"
-          echo "Server: $RESTREAM_URL"
-          echo "Resolution: 1080x1920"
-          echo "FPS: 30"
+          echo "Starting 1080x1920 vertical stream..."
           echo "Duration: 30 minutes"
-          echo "Video bitrate: 2500k"
-          echo "Audio bitrate: 128k"
-          echo "========================================"
 
           ffmpeg \
             -hide_banner \
@@ -249,15 +137,3 @@ jobs:
             -t 1800 \
             -f flv \
             "$TARGET"
-
-      # ============================================================
-      # 8. CLEANUP
-      # ============================================================
-      - name: Cleanup
-        if: always()
-        run: |
-          if [ -f /tmp/chrome.pid ]; then
-            kill "$(cat /tmp/chrome.pid)" 2>/dev/null || true
-          fi
-
-          pulseaudio --kill 2>/dev/null || true
