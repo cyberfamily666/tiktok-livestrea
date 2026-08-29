@@ -174,7 +174,7 @@ jobs:
           RESTREAM_URL="rtmp://london.restream.io/live"
 
           # Put your Restream key here.
-          RESTREAM_KEY="YOUR_RESTREAM_KEY"
+          RESTREAM_KEY="re_12262857_evente47de205e30c4d77b54e519cc0709736"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
 
