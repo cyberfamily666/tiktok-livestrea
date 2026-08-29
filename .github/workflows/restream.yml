@@ -11,15 +11,12 @@ jobs:
 
     env:
       DISPLAY: :99
-      SCREEN_WIDTH: 1080
-      SCREEN_HEIGHT: 1920
-      SCREEN_FPS: 30
       PULSE_SINK: TikTokSink
 
     steps:
 
       # =========================================================
-      # 1. Install dependencies
+      # 1. INSTALL DEPENDENCIES
       # =========================================================
       - name: Install dependencies
         run: |
@@ -38,10 +35,12 @@ jobs:
             x11-utils \
             imagemagick \
             curl \
-            jq
+            jq \
+            python3 \
+            python3-pip
 
       # =========================================================
-      # 2. Install Google Chrome
+      # 2. INSTALL GOOGLE CHROME
       # =========================================================
       - name: Install Google Chrome
         run: |
@@ -55,13 +54,15 @@ jobs:
           google-chrome --version
 
       # =========================================================
-      # 3. Start virtual display
+      # 3. START X SERVER
       # =========================================================
       - name: Start virtual display
         run: |
           set -eux
 
           export DISPLAY=:99
+
+          echo "Starting Xvfb..."
 
           Xvfb :99 \
             -screen 0 1080x1920x24 \
@@ -74,12 +75,17 @@ jobs:
 
           sleep 5
 
-          echo "DISPLAY:"
+          echo "Checking display..."
+
           xdpyinfo -display :99 | grep dimensions
+
+          echo "Disabling screen blanking..."
 
           xset -display :99 s off || true
           xset -display :99 -dpms || true
           xset -display :99 s noblank || true
+
+          echo "Starting Openbox..."
 
           openbox \
             --config-file /etc/xdg/openbox/rc.xml \
@@ -91,11 +97,13 @@ jobs:
           pgrep -a openbox || true
 
       # =========================================================
-      # 4. Start virtual audio
+      # 4. START PULSEAUDIO
       # =========================================================
       - name: Start virtual audio
         run: |
           set -eux
+
+          echo "Starting PulseAudio..."
 
           pulseaudio \
             --start \
@@ -104,6 +112,8 @@ jobs:
 
           sleep 4
 
+          echo "Creating virtual sink..."
+
           pactl load-module \
             module-null-sink \
             sink_name=TikTokSink \
@@ -111,20 +121,32 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "===== SINKS ====="
+          echo "========================================"
+          echo "AUDIO SINKS"
+          echo "========================================"
+
           pactl list short sinks
 
-          echo "===== SOURCES ====="
+          echo "========================================"
+          echo "AUDIO SOURCES"
+          echo "========================================"
+
           pactl list short sources
 
-          echo "===== DEFAULT ====="
+          echo "========================================"
+          echo "DEFAULT SINK"
+          echo "========================================"
+
           pactl get-default-sink
 
-          echo "===== MONITOR ====="
+          echo "========================================"
+          echo "MONITOR"
+          echo "========================================"
+
           pactl list short sources | grep "TikTokSink.monitor"
 
       # =========================================================
-      # 5. Launch Chrome with DevTools
+      # 5. LAUNCH CHROME
       # =========================================================
       - name: Launch Chrome renderer
         run: |
@@ -135,6 +157,8 @@ jobs:
 
           rm -rf /tmp/chrome-profile
 
+          echo "Launching Chrome..."
+
           google-chrome \
             --no-sandbox \
             --disable-dev-shm-usage \
@@ -143,13 +167,17 @@ jobs:
             --disable-infobars \
             --disable-session-crashed-bubble \
             --disable-popup-blocking \
+            --disable-translate \
             \
             --autoplay-policy=no-user-gesture-required \
+            \
+            --enable-javascript \
+            --allow-running-insecure-content \
             \
             --disable-background-timer-throttling \
             --disable-backgrounding-occluded-windows \
             --disable-renderer-backgrounding \
-            --disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
+            --disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache \
             \
             --enable-webgl \
             --enable-gpu-rasterization \
@@ -173,21 +201,38 @@ jobs:
           echo "Waiting for Chrome DevTools..."
 
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:9222/json >/tmp/chrome-tabs.json; then
-              echo "Chrome DevTools is ready."
+
+            if curl -fsS \
+              http://127.0.0.1:9222/json \
+              >/tmp/chrome-tabs.json; then
+
+              echo "Chrome DevTools ready."
               break
+
             fi
+
             sleep 1
+
           done
+
+          if [ ! -s /tmp/chrome-tabs.json ]; then
+            echo "Chrome DevTools did not start."
+
+            cat /tmp/chrome.log || true
+
+            exit 1
+          fi
 
           cat /tmp/chrome-tabs.json
 
-          sleep 15
+          echo "Waiting for webpage..."
+
+          sleep 20
 
       # =========================================================
-      # 6. Find Chrome window and focus it
+      # 6. FOCUS CHROME
       # =========================================================
-      - name: Focus Chrome renderer
+      - name: Focus Chrome
         run: |
           set -eux
 
@@ -199,202 +244,110 @@ jobs:
             | head -n 1)
 
           if [ -z "$CHROME_WINDOW" ]; then
+
             echo "Chrome window not found."
+
             cat /tmp/chrome.log || true
+
             exit 1
+
           fi
 
           echo "Chrome window: $CHROME_WINDOW"
 
-          xdotool windowmove "$CHROME_WINDOW" 0 0 || true
-          xdotool windowactivate "$CHROME_WINDOW" || true
+          xdotool windowmove \
+            "$CHROME_WINDOW" \
+            0 0 || true
+
+          xdotool windowactivate \
+            "$CHROME_WINDOW" || true
 
           sleep 3
 
           xdotool mousemove 540 960
+
+          sleep 2
+
           xdotool click 1 || true
 
           sleep 5
 
-          echo "Geometry:"
-          xdotool getwindowgeometry "$CHROME_WINDOW"
+          echo "Chrome geometry:"
+
+          xdotool getwindowgeometry \
+            "$CHROME_WINDOW" || true
 
       # =========================================================
-      # 7. Inspect the webpage through Chrome DevTools
+      # 7. GET DEVTOOLS WEBSOCKET
       # =========================================================
-      - name: Inspect JavaScript renderer
+      - name: Connect to Chrome DevTools
         run: |
           set -eux
 
-          echo "========================================"
-          echo "CHROME TABS"
-          echo "========================================"
-
-          cat /tmp/chrome-tabs.json
-
-          DEBUG_URL=$(jq -r '
+          jq -r '
             .[]
             | select(.type=="page")
             | .webSocketDebuggerUrl
-          ' /tmp/chrome-tabs.json | head -n 1)
-
-          if [ -z "$DEBUG_URL" ] || [ "$DEBUG_URL" = "null" ]; then
-            echo "ERROR: Could not find Chrome DevTools websocket."
-            exit 1
-          fi
-
-          echo "DevTools endpoint found."
-
-          # Install a small WebSocket client.
-          python3 -m pip install --quiet websocket-client
-
-          cat >/tmp/inspect_chrome.py <<'PY'
-          import json
-          import time
-          import websocket
-
-          url = open("/tmp/debug_url").read().strip()
-
-          ws = websocket.create_connection(url, timeout=10)
-
-          counter = 0
-
-          def command(method, params=None):
-              global counter
-
-              counter += 1
-
-              message = {
-                  "id": counter,
-                  "method": method
-              }
-
-              if params is not None:
-                  message["params"] = params
-
-              ws.send(json.dumps(message))
-
-              while True:
-                  response = json.loads(ws.recv())
-
-                  if response.get("id") == counter:
-                      return response
-
-          # Enable runtime.
-          print("Enabling Runtime...")
-          print(command("Runtime.enable"))
-
-          # Enable Page.
-          print("Enabling Page...")
-          print(command("Page.enable"))
-
-          # Make the tab visible to Chrome's page lifecycle.
-          print("Setting lifecycle events...")
-          print(command("Page.setWebLifecycleState", {
-              "state": "active"
-          }))
-
-          # Inspect the application.
-          expression = r"""
-          (() => {
-              const result = {};
-
-              result.url = location.href;
-              result.visibilityState = document.visibilityState;
-              result.hidden = document.hidden;
-              result.readyState = document.readyState;
-
-              result.engineRunning =
-                  window.__LiveSphereEngineRunning ?? null;
-
-              result.frameCounter =
-                  window.__LiveSphereFrameCounter ?? null;
-
-              result.stageInitialized =
-                  window.__LiveSphereStageInitialized ?? null;
-
-              result.viewerCount =
-                  document.querySelectorAll(".viewer").length;
-
-              result.canvasCount =
-                  document.querySelectorAll("canvas").length;
-
-              result.bodyChildren =
-                  document.body ? document.body.children.length : 0;
-
-              result.audioCount =
-                  document.querySelectorAll("audio").length;
-
-              result.videoCount =
-                  document.querySelectorAll("video").length;
-
-              result.title =
-                  document.title;
-
-              return JSON.stringify(result);
-          })()
-          """
-
-          print("========================================")
-          print("PAGE RUNTIME STATE")
-          print("========================================")
-
-          result = command("Runtime.evaluate", {
-              "expression": expression,
-              "returnByValue": True,
-              "awaitPromise": True
-          })
-
-          print(json.dumps(result, indent=2))
-
-          # Give the renderer time to advance.
-          time.sleep(5)
-
-          print("========================================")
-          print("PAGE RUNTIME STATE AFTER 5 SECONDS")
-          print("========================================")
-
-          result2 = command("Runtime.evaluate", {
-              "expression": expression,
-              "returnByValue": True,
-              "awaitPromise": True
-          })
-
-          print(json.dumps(result2, indent=2))
-
-          ws.close()
-          PY
-
-          printf '%s' "$DEBUG_URL" >/tmp/debug_url
-
-          python3 /tmp/inspect_chrome.py
-
-      # =========================================================
-      # 8. Force page lifecycle active + trigger rendering
-      # =========================================================
-      - name: Activate webpage renderer
-        run: |
-          set -eux
+          ' /tmp/chrome-tabs.json \
+            | head -n 1 \
+            >/tmp/debug_url
 
           DEBUG_URL=$(cat /tmp/debug_url)
 
-          cat >/tmp/activate_chrome.py <<'PY'
+          if [ -z "$DEBUG_URL" ] || [ "$DEBUG_URL" = "null" ]; then
+
+            echo "ERROR: DevTools websocket not found."
+
+            cat /tmp/chrome-tabs.json
+
+            exit 1
+
+          fi
+
+          echo "DevTools websocket found."
+
+          echo "$DEBUG_URL"
+
+      # =========================================================
+      # 8. INSTALL PYTHON WEBSOCKET CLIENT
+      # =========================================================
+      - name: Install DevTools client
+        run: |
+          set -eux
+
+          python3 -m pip install --quiet --break-system-packages websocket-client
+
+      # =========================================================
+      # 9. VERIFY JAVASCRIPT EXECUTION
+      # =========================================================
+      - name: Verify JavaScript renderer
+        run: |
+          set -eux
+
+          cat >/tmp/test_js.py <<'PY'
           import json
           import time
           import websocket
 
           url = open("/tmp/debug_url").read().strip()
-          ws = websocket.create_connection(url, timeout=10)
 
-          counter = 0
+          print("Connecting to Chrome...")
+
+          ws = websocket.create_connection(
+              url,
+              timeout=15
+          )
+
+          command_id = 0
 
           def command(method, params=None):
-              global counter
 
-              counter += 1
+              global command_id
+
+              command_id += 1
 
               message = {
-                  "id": counter,
+                  "id": command_id,
                   "method": method
               }
 
@@ -404,52 +357,225 @@ jobs:
               ws.send(json.dumps(message))
 
               while True:
+
                   response = json.loads(ws.recv())
 
-                  if response.get("id") == counter:
+                  if response.get("id") == command_id:
                       return response
 
-          command("Runtime.enable")
-          command("Page.enable")
+          print("Activating page...")
 
-          command("Page.setWebLifecycleState", {
-              "state": "active"
-          })
+          print(
+              command(
+                  "Page.setWebLifecycleState",
+                  {
+                      "state": "active"
+                  }
+              )
+          )
 
-          # This does NOT modify the hosted website.
-          # It only asks Chrome to evaluate runtime checks.
+          print("Enabling Runtime...")
+
+          print(
+              command(
+                  "Runtime.enable"
+              )
+          )
+
+          print("Testing JavaScript...")
+
           expression = r"""
           (() => {
-              document.documentElement.style.setProperty(
-                  "--github-renderer-active",
-                  "1"
-              );
 
-              return {
+              window.__GitHubRendererProbe = {
+                  executed: true,
+                  timestamp: Date.now(),
+                  raf: typeof requestAnimationFrame === "function",
+                  performance: typeof performance !== "undefined",
+                  document: typeof document !== "undefined",
                   visibility: document.visibilityState,
                   hidden: document.hidden,
-                  raf: typeof requestAnimationFrame,
-                  performanceNow: typeof performance.now
+                  readyState: document.readyState,
+                  url: location.href,
+                  scripts: document.scripts.length,
+                  canvases: document.querySelectorAll("canvas").length,
+                  viewers: document.querySelectorAll(".viewer").length,
+                  audio: document.querySelectorAll("audio").length,
+                  video: document.querySelectorAll("video").length
               };
+
+              return window.__GitHubRendererProbe;
+
           })()
           """
 
-          print(command("Runtime.evaluate", {
-              "expression": expression,
-              "returnByValue": True
-          }))
+          result = command(
+              "Runtime.evaluate",
+              {
+                  "expression": expression,
+                  "returnByValue": True,
+                  "awaitPromise": True
+              }
+          )
 
-          time.sleep(2)
+          print("========================================")
+          print("JAVASCRIPT RESULT")
+          print("========================================")
+
+          print(
+              json.dumps(
+                  result,
+                  indent=2
+              )
+          )
+
+          print("Waiting five seconds...")
+
+          time.sleep(5)
+
+          expression2 = r"""
+          (() => ({
+
+              executedAgain: true,
+
+              timestamp: Date.now(),
+
+              visibility: document.visibilityState,
+
+              hidden: document.hidden,
+
+              engineRunning:
+                  window.__LiveSphereEngineRunning ?? null,
+
+              frameCounter:
+                  window.__LiveSphereFrameCounter ?? null,
+
+              stageInitialized:
+                  window.__LiveSphereStageInitialized ?? null,
+
+              viewers:
+                  document.querySelectorAll(".viewer").length,
+
+              canvases:
+                  document.querySelectorAll("canvas").length,
+
+              audio:
+                  document.querySelectorAll("audio").length
+
+          }))()
+          """
+
+          result2 = command(
+              "Runtime.evaluate",
+              {
+                  "expression": expression2,
+                  "returnByValue": True,
+                  "awaitPromise": True
+              }
+          )
+
+          print("========================================")
+          print("JAVASCRIPT RESULT AFTER 5 SECONDS")
+          print("========================================")
+
+          print(
+              json.dumps(
+                  result2,
+                  indent=2
+              )
+          )
 
           ws.close()
           PY
 
-          python3 -m pip install --quiet websocket-client
-
-          python3 /tmp/activate_chrome.py
+          python3 /tmp/test_js.py
 
       # =========================================================
-      # 9. Wait for renderer
+      # 10. FORCE ACTIVE PAGE LIFECYCLE
+      # =========================================================
+      - name: Keep Chrome page active
+        run: |
+          set -eux
+
+          cat >/tmp/activate_page.py <<'PY'
+          import json
+          import time
+          import websocket
+
+          url = open("/tmp/debug_url").read().strip()
+
+          ws = websocket.create_connection(
+              url,
+              timeout=15
+          )
+
+          command_id = 0
+
+          def command(method, params=None):
+
+              global command_id
+
+              command_id += 1
+
+              msg = {
+                  "id": command_id,
+                  "method": method
+              }
+
+              if params is not None:
+                  msg["params"] = params
+
+              ws.send(json.dumps(msg))
+
+              while True:
+
+                  response = json.loads(ws.recv())
+
+                  if response.get("id") == command_id:
+                      return response
+
+          print(
+              command(
+                  "Page.setWebLifecycleState",
+                  {
+                      "state": "active"
+                  }
+              )
+          )
+
+          print(
+              command(
+                  "Emulation.setFocusEmulationEnabled",
+                  {
+                      "enabled": True
+                  }
+              )
+          )
+
+          print(
+              command(
+                  "Runtime.evaluate",
+                  {
+                      "expression": """
+                      (() => ({
+                          visibility: document.visibilityState,
+                          hidden: document.hidden,
+                          hasRAF:
+                              typeof requestAnimationFrame === "function"
+                      }))()
+                      """,
+                      "returnByValue": True
+                  }
+              )
+          )
+
+          ws.close()
+          PY
+
+          python3 /tmp/activate_page.py
+
+      # =========================================================
+      # 11. WARM UP WEBSITE
       # =========================================================
       - name: Warm up renderer
         run: |
@@ -457,26 +583,28 @@ jobs:
 
           export DISPLAY=:99
 
-          echo "Warming up webpage..."
+          echo "Giving JavaScript renderer time to run..."
 
           sleep 20
 
           echo "Chrome processes:"
+
           pgrep -a chrome || true
 
           echo "Display:"
+
           xdpyinfo -display :99 | grep dimensions
 
       # =========================================================
-      # 10. Capture diagnostic screenshots
+      # 12. CAPTURE TWO FRAMES
       # =========================================================
-      - name: Capture renderer diagnostics
+      - name: Capture diagnostic frames
         run: |
           set -eux
 
           export DISPLAY=:99
 
-          echo "Capturing first frame..."
+          echo "Capturing frame 1..."
 
           import \
             -display :99 \
@@ -485,19 +613,21 @@ jobs:
 
           sleep 3
 
-          echo "Capturing second frame..."
+          echo "Capturing frame 2..."
 
           import \
             -display :99 \
             -window root \
             /tmp/webpage-after.png
 
+          echo "Images:"
+
           identify \
             /tmp/webpage-before.png \
             /tmp/webpage-after.png
 
       # =========================================================
-      # 11. Upload diagnostic frames
+      # 13. UPLOAD DIAGNOSTICS
       # =========================================================
       - name: Upload renderer diagnostics
         uses: actions/upload-artifact@v4
@@ -512,25 +642,33 @@ jobs:
           if-no-files-found: error
 
       # =========================================================
-      # 12. Verify PulseAudio
+      # 14. VERIFY AUDIO
       # =========================================================
       - name: Verify audio pipeline
         run: |
           set -eux
 
-          echo "===== AUDIO SINKS ====="
+          echo "========================================"
+          echo "PULSEAUDIO SINKS"
+          echo "========================================"
+
           pactl list short sinks
 
-          echo "===== AUDIO SOURCES ====="
+          echo "========================================"
+          echo "PULSEAUDIO SOURCES"
+          echo "========================================"
+
           pactl list short sources
 
-          echo "===== DEFAULT SINK ====="
+          echo "========================================"
+          echo "DEFAULT SINK"
+          echo "========================================"
+
           pactl get-default-sink
 
-          echo "===== AUDIO MONITOR ====="
-          pactl list short sources | grep "TikTokSink.monitor"
-
-          echo "===== FIVE SECOND AUDIO TEST ====="
+          echo "========================================"
+          echo "AUDIO LEVEL TEST"
+          echo "========================================"
 
           timeout 5 ffmpeg \
             -hide_banner \
@@ -540,14 +678,17 @@ jobs:
             -af volumedetect \
             -f null \
             - \
-            2>&1 | tee /tmp/audio-test.log || true
+            2>&1 \
+            | tee /tmp/audio-test.log || true
 
-          echo "===== AUDIO TEST RESULT ====="
+          echo "========================================"
+          echo "AUDIO TEST RESULT"
+          echo "========================================"
 
           cat /tmp/audio-test.log || true
 
       # =========================================================
-      # 13. Stream to Restream
+      # 15. FINAL RESTREAM
       # =========================================================
       - name: Stream to Restream
         run: |
@@ -570,6 +711,16 @@ jobs:
           echo "FPS: 30"
           echo "Duration: 3 minutes"
           echo "========================================"
+
+          echo "Checking display..."
+
+          xdpyinfo -display :99 | grep dimensions
+
+          echo "Checking audio..."
+
+          pactl list short sources | grep "TikTokSink.monitor"
+
+          echo "Starting FFmpeg..."
 
           ffmpeg \
             -hide_banner \
