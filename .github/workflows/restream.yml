@@ -1,36 +1,153 @@
+name: Public Website 3-Minute Restream Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Install dependencies
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            ffmpeg \
+            xvfb \
+            xdotool \
+            pulseaudio \
+            pulseaudio-utils \
+            wget \
+            x11-utils
+
+      - name: Install Google Chrome
+        run: |
+          set -eux
+
+          wget -O /tmp/chrome.deb \
+            https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+
+          sudo apt-get install -y /tmp/chrome.deb
+
+          google-chrome --version
+
+      - name: Start virtual display
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          Xvfb :99 \
+            -screen 0 1080x1920x24 \
+            -ac \
+            +extension GLX \
+            +render \
+            -noreset &
+
+          sleep 4
+
+          echo "Virtual display:"
+          xdpyinfo -display :99 | grep dimensions
+
+      - name: Start virtual audio
+        run: |
+          set -eux
+
+          pulseaudio \
+            --start \
+            --exit-idle-time=-1
+
+          sleep 3
+
+          pactl load-module \
+            module-null-sink \
+            sink_name=TikTokSink \
+            sink_properties=device.description=TikTokSink
+
+          pactl set-default-sink TikTokSink
+
+          echo "Audio sinks:"
+          pactl list short sinks
+
+          echo "Audio sources:"
+          pactl list short sources
+
       - name: Launch public webpage
         run: |
           set -eux
-          export DISPLAY=:99
 
-          # Clean old profile
-          rm -rf /tmp/chrome-profile
-          mkdir -p /tmp/chrome-profile
+          export DISPLAY=:99
 
           google-chrome \
             --no-sandbox \
+            --disable-gpu \
             --disable-dev-shm-usage \
-            --use-gl=swiftshader \
-            --disable-features=VizDisplayCompositor \
+            --disable-software-rasterizer \
             --window-size=1080,1920 \
             --window-position=0,0 \
-            --start-maximized \
-            --kiosk \
             --autoplay-policy=no-user-gesture-required \
             --user-data-dir=/tmp/chrome-profile \
             "https://www.wikipedia.org/" &
 
-          sleep 15
+          sleep 12
 
-          # Bring Chrome to front and focus
-          wmctrl -r :ACTIVE: -e 0,0,0,1080,1920 || true
-          xdotool mousemove 540 960 click 1
-          sleep 2
+          xdotool mousemove 540 960
+          xdotool click 1
 
-      - name: Debug screenshot (to see what ffmpeg sees)
+          sleep 3
+
+      - name: Stream to Restream
         run: |
-          export DISPLAY=:99
-          sudo apt-get install -y imagemagick
-          sleep 2
-          import -window root /tmp/screen.png
-          ls -lh /tmp/screen.png
+          set -euo pipefail
+
+          RESTREAM_URL="rtmp://london.restream.io/live"
+
+          # Enter your current valid Restream key here.
+          RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
+
+          TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
+
+          echo "========================================"
+          echo "PUBLIC WEBSITE RESTREAM TEST"
+          echo "========================================"
+          echo "Website: https://www.wikipedia.org/"
+          echo "Server: $RESTREAM_URL"
+          echo "Resolution: 1080x1920"
+          echo "FPS: 30"
+          echo "Duration: 3 minutes"
+          echo "========================================"
+
+          ffmpeg \
+            -hide_banner \
+            -loglevel info \
+            -f x11grab \
+            -video_size 1080x1920 \
+            -framerate 30 \
+            -draw_mouse 0 \
+            -i :99.0 \
+            -f pulse \
+            -i TikTokSink.monitor \
+            -map 0:v:0 \
+            -map 1:a:0 \
+            -c:v libx264 \
+            -preset ultrafast \
+            -tune zerolatency \
+            -pix_fmt yuv420p \
+            -r 30 \
+            -b:v 2500k \
+            -maxrate 3000k \
+            -bufsize 6000k \
+            -g 60 \
+            -keyint_min 60 \
+            -sc_threshold 0 \
+            -c:a aac \
+            -b:a 128k \
+            -ar 44100 \
+            -ac 2 \
+            -t 180 \
+            -f flv \
+            "$TARGET"
