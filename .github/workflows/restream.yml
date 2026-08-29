@@ -84,7 +84,7 @@ jobs:
             --window-position=0,0 \
             --autoplay-policy=no-user-gesture-required \
             --user-data-dir=/tmp/chrome-profile \
-            "https://livespherev3.gamer.gd/" &
+            "https://livespherev3.gamer.gd/?i=1" &
 
           sleep 12
 
