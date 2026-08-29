@@ -10,6 +10,9 @@ jobs:
 
     steps:
 
+      # =========================================================
+      # 1. Install dependencies
+      # =========================================================
       - name: Install dependencies
         run: |
           set -eux
@@ -19,12 +22,16 @@ jobs:
           sudo apt-get install -y \
             ffmpeg \
             xvfb \
+            openbox \
             xdotool \
             pulseaudio \
             pulseaudio-utils \
             wget \
             x11-utils
 
+      # =========================================================
+      # 2. Install Google Chrome
+      # =========================================================
       - name: Install Google Chrome
         run: |
           set -eux
@@ -36,6 +43,9 @@ jobs:
 
           google-chrome --version
 
+      # =========================================================
+      # 3. Start virtual display + window manager
+      # =========================================================
       - name: Start virtual display
         run: |
           set -eux
@@ -51,9 +61,22 @@ jobs:
 
           sleep 4
 
-          echo "DISPLAY:"
+          echo "Virtual display:"
           xdpyinfo -display :99 | grep dimensions
 
+          # Start Openbox window manager.
+          openbox \
+            --config-file /etc/xdg/openbox/rc.xml \
+            >/tmp/openbox.log 2>&1 &
+
+          sleep 3
+
+          echo "Openbox:"
+          pgrep -a openbox || true
+
+      # =========================================================
+      # 4. Start virtual audio
+      # =========================================================
       - name: Start virtual audio
         run: |
           set -eux
@@ -71,10 +94,15 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "Audio:"
+          echo "Audio sinks:"
           pactl list short sinks
+
+          echo "Audio sources:"
           pactl list short sources
 
+      # =========================================================
+      # 5. Launch public webpage
+      # =========================================================
       - name: Launch public webpage
         run: |
           set -eux
@@ -86,16 +114,17 @@ jobs:
             --disable-gpu \
             --disable-dev-shm-usage \
             --disable-software-rasterizer \
-            --disable-features=Translate \
-            --kiosk \
-            --start-fullscreen \
+            --no-first-run \
+            --no-default-browser-check \
+            --disable-infobars \
+            --autoplay-policy=no-user-gesture-required \
+            --force-device-scale-factor=1 \
             --window-size=1080,1920 \
             --window-position=0,0 \
-            --force-device-scale-factor=1 \
-            --autoplay-policy=no-user-gesture-required \
             --user-data-dir=/tmp/chrome-profile \
             "https://www.wikipedia.org/" &
 
+          echo "Waiting for Chrome..."
           sleep 12
 
           echo "Chrome windows:"
@@ -104,33 +133,55 @@ jobs:
             --class "google-chrome" \
             getwindowgeometry %@ || true
 
-          echo "Display:"
-          xdpyinfo -display :99 | grep dimensions
+          CHROME_WINDOW=$(xdotool search \
+            --onlyvisible \
+            --class "google-chrome" \
+            | head -n 1)
 
-          # Give the webpage focus.
-          xdotool mousemove 540 960
-          xdotool click 1
+          if [ -z "$CHROME_WINDOW" ]; then
+            echo "ERROR: Chrome window not found"
+            exit 1
+          fi
+
+          echo "Chrome window ID: $CHROME_WINDOW"
+
+          # Move Chrome to top-left.
+          xdotool windowmove \
+            "$CHROME_WINDOW" \
+            0 0
 
           sleep 2
 
-          # Zoom the actual webpage content.
-          xdotool key ctrl+plus
-          xdotool key ctrl+plus
-          xdotool key ctrl+plus
+          # Maximize Chrome using Openbox.
+          xdotool key \
+            --window "$CHROME_WINDOW" \
+            alt+F10
 
           sleep 5
 
-          echo "Final Chrome geometry:"
-          xdotool search \
-            --onlyvisible \
-            --class "google-chrome" \
-            getwindowgeometry %@ || true
+          echo "FINAL Chrome geometry:"
+          xdotool getwindowgeometry \
+            "$CHROME_WINDOW"
 
+          echo "FINAL display geometry:"
+          xdpyinfo -display :99 | grep dimensions
+
+          # Focus webpage.
+          xdotool mousemove 540 960
+          xdotool click 1
+
+          sleep 3
+
+      # =========================================================
+      # 6. Stream to Restream
+      # =========================================================
       - name: Stream to Restream
         run: |
           set -euo pipefail
 
           RESTREAM_URL="rtmp://london.restream.io/live"
+
+          # QUICK TEST KEY
           RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
@@ -139,6 +190,7 @@ jobs:
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
           echo "Website: https://www.wikipedia.org/"
+          echo "Server: $RESTREAM_URL"
           echo "Resolution: 1080x1920"
           echo "FPS: 30"
           echo "Duration: 3 minutes"
