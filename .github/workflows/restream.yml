@@ -9,6 +9,10 @@ jobs:
     timeout-minutes: 10
 
     steps:
+
+      # ---------------------------------------------------------
+      # 1. Install dependencies
+      # ---------------------------------------------------------
       - name: Install dependencies
         run: |
           set -eux
@@ -24,6 +28,9 @@ jobs:
             wget \
             x11-utils
 
+      # ---------------------------------------------------------
+      # 2. Install Google Chrome
+      # ---------------------------------------------------------
       - name: Install Google Chrome
         run: |
           set -eux
@@ -35,6 +42,9 @@ jobs:
 
           google-chrome --version
 
+      # ---------------------------------------------------------
+      # 3. Start virtual display
+      # ---------------------------------------------------------
       - name: Start virtual display
         run: |
           set -eux
@@ -53,6 +63,9 @@ jobs:
           echo "Virtual display:"
           xdpyinfo -display :99 | grep dimensions
 
+      # ---------------------------------------------------------
+      # 4. Start virtual audio
+      # ---------------------------------------------------------
       - name: Start virtual audio
         run: |
           set -eux
@@ -76,6 +89,9 @@ jobs:
           echo "Audio sources:"
           pactl list short sources
 
+      # ---------------------------------------------------------
+      # 5. Launch public webpage
+      # ---------------------------------------------------------
       - name: Launch public webpage
         run: |
           set -eux
@@ -87,26 +103,66 @@ jobs:
             --disable-gpu \
             --disable-dev-shm-usage \
             --disable-software-rasterizer \
+            --start-maximized \
             --window-size=1080,1920 \
             --window-position=0,0 \
+            --force-device-scale-factor=1 \
+            --high-dpi-support=1 \
             --autoplay-policy=no-user-gesture-required \
+            --disable-infobars \
+            --disable-session-crashed-bubble \
             --user-data-dir=/tmp/chrome-profile \
             "https://www.wikipedia.org/" &
 
+          echo "Waiting for Chrome..."
           sleep 12
 
+          echo "Finding Chrome window..."
+
+          CHROME_WINDOW=$(xdotool search \
+            --onlyvisible \
+            --class "google-chrome" \
+            | head -n 1)
+
+          if [ -z "$CHROME_WINDOW" ]; then
+            echo "ERROR: Chrome window not found"
+            exit 1
+          fi
+
+          echo "Chrome window ID: $CHROME_WINDOW"
+
+          xdotool windowmove \
+            "$CHROME_WINDOW" \
+            0 0
+
+          xdotool windowsize \
+            "$CHROME_WINDOW" \
+            1080 1920
+
+          sleep 3
+
+          echo "Chrome geometry:"
+          xdotool getwindowgeometry "$CHROME_WINDOW"
+
+          echo "Display geometry:"
+          xdpyinfo -display :99 | grep dimensions
+
+          # Click inside the webpage.
           xdotool mousemove 540 960
           xdotool click 1
 
           sleep 3
 
+      # ---------------------------------------------------------
+      # 6. Stream to Restream
+      # ---------------------------------------------------------
       - name: Stream to Restream
         run: |
           set -euo pipefail
 
           RESTREAM_URL="rtmp://london.restream.io/live"
 
-          # Enter your current valid Restream key here.
+          # QUICK TEST KEY
           RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
