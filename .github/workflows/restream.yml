@@ -10,9 +10,6 @@ jobs:
 
     steps:
 
-      # =========================================================
-      # 1. Install dependencies
-      # =========================================================
       - name: Install dependencies
         run: |
           set -eux
@@ -28,9 +25,6 @@ jobs:
             wget \
             x11-utils
 
-      # =========================================================
-      # 2. Install Google Chrome
-      # =========================================================
       - name: Install Google Chrome
         run: |
           set -eux
@@ -42,9 +36,6 @@ jobs:
 
           google-chrome --version
 
-      # =========================================================
-      # 3. Start 1080x1920 virtual display
-      # =========================================================
       - name: Start virtual display
         run: |
           set -eux
@@ -60,12 +51,9 @@ jobs:
 
           sleep 4
 
-          echo "Virtual display:"
+          echo "DISPLAY:"
           xdpyinfo -display :99 | grep dimensions
 
-      # =========================================================
-      # 4. Start virtual audio
-      # =========================================================
       - name: Start virtual audio
         run: |
           set -eux
@@ -83,15 +71,10 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "Audio sinks:"
+          echo "Audio:"
           pactl list short sinks
-
-          echo "Audio sources:"
           pactl list short sources
 
-      # =========================================================
-      # 5. Launch website FULL SCREEN
-      # =========================================================
       - name: Launch public webpage
         run: |
           set -eux
@@ -103,20 +86,16 @@ jobs:
             --disable-gpu \
             --disable-dev-shm-usage \
             --disable-software-rasterizer \
+            --disable-features=Translate \
             --kiosk \
             --start-fullscreen \
             --window-size=1080,1920 \
             --window-position=0,0 \
             --force-device-scale-factor=1 \
-            --high-dpi-support=1 \
             --autoplay-policy=no-user-gesture-required \
-            --disable-infobars \
-            --disable-session-crashed-bubble \
-            --disable-translate \
             --user-data-dir=/tmp/chrome-profile \
             "https://www.wikipedia.org/" &
 
-          echo "Waiting for Chrome..."
           sleep 12
 
           echo "Chrome windows:"
@@ -125,25 +104,33 @@ jobs:
             --class "google-chrome" \
             getwindowgeometry %@ || true
 
-          echo "Display geometry:"
+          echo "Display:"
           xdpyinfo -display :99 | grep dimensions
 
-          # Put mouse in the center and click once.
+          # Give the webpage focus.
           xdotool mousemove 540 960
           xdotool click 1
 
-          sleep 3
+          sleep 2
 
-      # =========================================================
-      # 6. Stream screen + audio to Restream
-      # =========================================================
+          # Zoom the actual webpage content.
+          xdotool key ctrl+plus
+          xdotool key ctrl+plus
+          xdotool key ctrl+plus
+
+          sleep 5
+
+          echo "Final Chrome geometry:"
+          xdotool search \
+            --onlyvisible \
+            --class "google-chrome" \
+            getwindowgeometry %@ || true
+
       - name: Stream to Restream
         run: |
           set -euo pipefail
 
           RESTREAM_URL="rtmp://london.restream.io/live"
-
-          # QUICK TEST KEY
           RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
@@ -152,7 +139,6 @@ jobs:
           echo "PUBLIC WEBSITE RESTREAM TEST"
           echo "========================================"
           echo "Website: https://www.wikipedia.org/"
-          echo "Server: $RESTREAM_URL"
           echo "Resolution: 1080x1920"
           echo "FPS: 30"
           echo "Duration: 3 minutes"
