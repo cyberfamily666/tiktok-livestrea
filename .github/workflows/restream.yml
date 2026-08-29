@@ -9,6 +9,7 @@ jobs:
     timeout-minutes: 35
 
     steps:
+
       - name: Install dependencies
         run: |
           set -eux
@@ -21,7 +22,8 @@ jobs:
             xdotool \
             pulseaudio \
             pulseaudio-utils \
-            wget
+            wget \
+            imagemagick
 
       - name: Install Google Chrome
         run: |
@@ -45,9 +47,13 @@ jobs:
             -ac \
             +extension GLX \
             +render \
-            -noreset &
+            -noreset \
+            > /tmp/xvfb.log 2>&1 &
 
           sleep 4
+
+          echo "Display:"
+          xdpyinfo | grep dimensions
 
       - name: Start virtual audio
         run: |
@@ -69,7 +75,7 @@ jobs:
           pactl list short sinks
           pactl list short sources
 
-      - name: Launch webpage
+      - name: Launch LiveSphere
         run: |
           set -eux
 
@@ -84,29 +90,83 @@ jobs:
             --window-position=0,0 \
             --autoplay-policy=no-user-gesture-required \
             --user-data-dir=/tmp/chrome-profile \
-            "https://livespherev3.gamer.gd/?i=1" &
+            "https://livespherev3.gamer.gd/?i=1" \
+            > /tmp/chrome.log 2>&1 &
 
-          sleep 12
+          CHROME_PID=$!
+
+          echo "$CHROME_PID" > /tmp/chrome.pid
+
+          echo "Chrome PID: $CHROME_PID"
+          echo "Waiting for LiveSphere..."
+          sleep 15
+
+          echo "========================================"
+          echo "CHROME VERSION"
+          echo "========================================"
+
+          google-chrome --version
+
+          echo "========================================"
+          echo "CHROME PROCESS"
+          echo "========================================"
+
+          ps -p "$CHROME_PID" -f || true
+
+          echo "========================================"
+          echo "CHROME LOG"
+          echo "========================================"
+
+          cat /tmp/chrome.log || true
+
+          echo "========================================"
+          echo "VISIBLE WINDOWS"
+          echo "========================================"
+
+          xdotool search --onlyvisible --name ".*" \
+            getwindowname %@ || true
+
+          echo "========================================"
+          echo "TRIGGERING PAGE CLICK"
+          echo "========================================"
 
           xdotool mousemove 540 960
           xdotool click 1
 
-          sleep 3
+          sleep 5
+
+          echo "========================================"
+          echo "AUDIO CONNECTIONS"
+          echo "========================================"
+
+          pactl list short sink-inputs || true
+
+          echo "========================================"
+          echo "CAPTURING CURRENT DISPLAY"
+          echo "========================================"
+
+          import -display :99 -window root /tmp/livesphere-preview.png
+
+          echo "Preview saved to /tmp/livesphere-preview.png"
 
       - name: Stream to Restream
         run: |
           set -euo pipefail
 
-          # Restream RTMP server
           RESTREAM_URL="rtmp://london.restream.io/live"
 
-          # PUT YOUR RESTREAM KEY ON THIS LINE
-          RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
+          # Keep your current Restream key here locally.
+          RESTREAM_KEY="YOUR_RESTREAM_KEY"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
 
-          echo "Starting 1080x1920 vertical stream..."
-          echo "Duration: 30 minutes"
+          echo "========================================"
+          echo "STARTING 30 MINUTE STREAM"
+          echo "========================================"
+          echo "Resolution: 1080x1920"
+          echo "FPS: 30"
+          echo "Duration: 1800 seconds"
+          echo "========================================"
 
           ffmpeg \
             -hide_banner \
@@ -138,3 +198,12 @@ jobs:
             -t 1800 \
             -f flv \
             "$TARGET"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/chrome.pid ]; then
+            kill "$(cat /tmp/chrome.pid)" 2>/dev/null || true
+          fi
+
+          pulseaudio --kill 2>/dev/null || true
