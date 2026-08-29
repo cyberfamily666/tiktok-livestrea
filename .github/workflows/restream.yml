@@ -54,15 +54,13 @@ jobs:
           google-chrome --version
 
       # =========================================================
-      # 3. START X SERVER
+      # 3. START VIRTUAL DISPLAY
       # =========================================================
       - name: Start virtual display
         run: |
           set -eux
 
           export DISPLAY=:99
-
-          echo "Starting Xvfb..."
 
           Xvfb :99 \
             -screen 0 1080x1920x24 \
@@ -75,17 +73,12 @@ jobs:
 
           sleep 5
 
-          echo "Checking display..."
-
+          echo "Display:"
           xdpyinfo -display :99 | grep dimensions
-
-          echo "Disabling screen blanking..."
 
           xset -display :99 s off || true
           xset -display :99 -dpms || true
           xset -display :99 s noblank || true
-
-          echo "Starting Openbox..."
 
           openbox \
             --config-file /etc/xdg/openbox/rc.xml \
@@ -93,17 +86,12 @@ jobs:
 
           sleep 4
 
-          echo "Openbox:"
-          pgrep -a openbox || true
-
       # =========================================================
-      # 4. START PULSEAUDIO
+      # 4. START VIRTUAL AUDIO
       # =========================================================
       - name: Start virtual audio
         run: |
           set -eux
-
-          echo "Starting PulseAudio..."
 
           pulseaudio \
             --start \
@@ -112,8 +100,6 @@ jobs:
 
           sleep 4
 
-          echo "Creating virtual sink..."
-
           pactl load-module \
             module-null-sink \
             sink_name=TikTokSink \
@@ -121,29 +107,14 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
-          echo "========================================"
-          echo "AUDIO SINKS"
-          echo "========================================"
-
+          echo "Sinks:"
           pactl list short sinks
 
-          echo "========================================"
-          echo "AUDIO SOURCES"
-          echo "========================================"
-
+          echo "Sources:"
           pactl list short sources
 
-          echo "========================================"
-          echo "DEFAULT SINK"
-          echo "========================================"
-
+          echo "Default:"
           pactl get-default-sink
-
-          echo "========================================"
-          echo "MONITOR"
-          echo "========================================"
-
-          pactl list short sources | grep "TikTokSink.monitor"
 
       # =========================================================
       # 5. LAUNCH CHROME
@@ -157,8 +128,6 @@ jobs:
 
           rm -rf /tmp/chrome-profile
 
-          echo "Launching Chrome..."
-
           google-chrome \
             --no-sandbox \
             --disable-dev-shm-usage \
@@ -167,12 +136,8 @@ jobs:
             --disable-infobars \
             --disable-session-crashed-bubble \
             --disable-popup-blocking \
-            --disable-translate \
             \
             --autoplay-policy=no-user-gesture-required \
-            \
-            --enable-javascript \
-            --allow-running-insecure-content \
             \
             --disable-background-timer-throttling \
             --disable-backgrounding-occluded-windows \
@@ -187,7 +152,6 @@ jobs:
             --window-size=1080,1920 \
             --window-position=0,0 \
             --start-maximized \
-            --kiosk \
             \
             --remote-debugging-port=9222 \
             --remote-debugging-address=127.0.0.1 \
@@ -198,41 +162,36 @@ jobs:
             "https://livespherev3.gamer.gd/?i=1" \
             >/tmp/chrome.log 2>&1 &
 
-          echo "Waiting for Chrome DevTools..."
+          echo "Waiting for Chrome..."
 
           for i in $(seq 1 30); do
-
             if curl -fsS \
               http://127.0.0.1:9222/json \
               >/tmp/chrome-tabs.json; then
 
               echo "Chrome DevTools ready."
               break
-
             fi
 
             sleep 1
-
           done
 
           if [ ! -s /tmp/chrome-tabs.json ]; then
-            echo "Chrome DevTools did not start."
+            echo "Chrome failed to start."
 
             cat /tmp/chrome.log || true
 
             exit 1
           fi
 
-          cat /tmp/chrome-tabs.json
-
-          echo "Waiting for webpage..."
-
           sleep 20
+
+          cat /tmp/chrome-tabs.json
 
       # =========================================================
       # 6. FOCUS CHROME
       # =========================================================
-      - name: Focus Chrome
+      - name: Focus browser
         run: |
           set -eux
 
@@ -244,43 +203,33 @@ jobs:
             | head -n 1)
 
           if [ -z "$CHROME_WINDOW" ]; then
-
             echo "Chrome window not found."
 
             cat /tmp/chrome.log || true
 
             exit 1
-
           fi
 
           echo "Chrome window: $CHROME_WINDOW"
 
-          xdotool windowmove \
-            "$CHROME_WINDOW" \
-            0 0 || true
+          xdotool windowmove "$CHROME_WINDOW" 0 0 || true
 
-          xdotool windowactivate \
-            "$CHROME_WINDOW" || true
+          xdotool windowactivate "$CHROME_WINDOW" || true
 
           sleep 3
 
           xdotool mousemove 540 960
 
-          sleep 2
-
           xdotool click 1 || true
 
           sleep 5
 
-          echo "Chrome geometry:"
-
-          xdotool getwindowgeometry \
-            "$CHROME_WINDOW" || true
+          xdotool getwindowgeometry "$CHROME_WINDOW"
 
       # =========================================================
       # 7. GET DEVTOOLS WEBSOCKET
       # =========================================================
-      - name: Connect to Chrome DevTools
+      - name: Prepare DevTools
         run: |
           set -eux
 
@@ -295,221 +244,48 @@ jobs:
           DEBUG_URL=$(cat /tmp/debug_url)
 
           if [ -z "$DEBUG_URL" ] || [ "$DEBUG_URL" = "null" ]; then
-
-            echo "ERROR: DevTools websocket not found."
-
-            cat /tmp/chrome-tabs.json
-
+            echo "No Chrome DevTools websocket found."
             exit 1
-
           fi
 
-          echo "DevTools websocket found."
-
-          echo "$DEBUG_URL"
+          echo "DevTools endpoint ready."
 
       # =========================================================
-      # 8. INSTALL PYTHON WEBSOCKET CLIENT
+      # 8. INSTALL WEBSOCKET CLIENT
       # =========================================================
-      - name: Install DevTools client
+      - name: Install Python DevTools client
         run: |
           set -eux
 
-          python3 -m pip install --quiet --break-system-packages websocket-client
+          python3 -m pip install \
+            --quiet \
+            --break-system-packages \
+            websocket-client
 
       # =========================================================
-      # 9. VERIFY JAVASCRIPT EXECUTION
+      # 9. DEEP JAVASCRIPT DIAGNOSTIC
       # =========================================================
-      - name: Verify JavaScript renderer
+      - name: Diagnose JavaScript and animation
         run: |
           set -eux
 
-          cat >/tmp/test_js.py <<'PY'
+          cat >/tmp/browser_diagnostic.py <<'PY'
           import json
           import time
           import websocket
-
-          url = open("/tmp/debug_url").read().strip()
-
-          print("Connecting to Chrome...")
-
-          ws = websocket.create_connection(
-              url,
-              timeout=15
-          )
-
-          command_id = 0
-
-          def command(method, params=None):
-
-              global command_id
-
-              command_id += 1
-
-              message = {
-                  "id": command_id,
-                  "method": method
-              }
-
-              if params is not None:
-                  message["params"] = params
-
-              ws.send(json.dumps(message))
-
-              while True:
-
-                  response = json.loads(ws.recv())
-
-                  if response.get("id") == command_id:
-                      return response
-
-          print("Activating page...")
-
-          print(
-              command(
-                  "Page.setWebLifecycleState",
-                  {
-                      "state": "active"
-                  }
-              )
-          )
-
-          print("Enabling Runtime...")
-
-          print(
-              command(
-                  "Runtime.enable"
-              )
-          )
-
-          print("Testing JavaScript...")
-
-          expression = r"""
-          (() => {
-
-              window.__GitHubRendererProbe = {
-                  executed: true,
-                  timestamp: Date.now(),
-                  raf: typeof requestAnimationFrame === "function",
-                  performance: typeof performance !== "undefined",
-                  document: typeof document !== "undefined",
-                  visibility: document.visibilityState,
-                  hidden: document.hidden,
-                  readyState: document.readyState,
-                  url: location.href,
-                  scripts: document.scripts.length,
-                  canvases: document.querySelectorAll("canvas").length,
-                  viewers: document.querySelectorAll(".viewer").length,
-                  audio: document.querySelectorAll("audio").length,
-                  video: document.querySelectorAll("video").length
-              };
-
-              return window.__GitHubRendererProbe;
-
-          })()
-          """
-
-          result = command(
-              "Runtime.evaluate",
-              {
-                  "expression": expression,
-                  "returnByValue": True,
-                  "awaitPromise": True
-              }
-          )
-
-          print("========================================")
-          print("JAVASCRIPT RESULT")
-          print("========================================")
-
-          print(
-              json.dumps(
-                  result,
-                  indent=2
-              )
-          )
-
-          print("Waiting five seconds...")
-
-          time.sleep(5)
-
-          expression2 = r"""
-          (() => ({
-
-              executedAgain: true,
-
-              timestamp: Date.now(),
-
-              visibility: document.visibilityState,
-
-              hidden: document.hidden,
-
-              engineRunning:
-                  window.__LiveSphereEngineRunning ?? null,
-
-              frameCounter:
-                  window.__LiveSphereFrameCounter ?? null,
-
-              stageInitialized:
-                  window.__LiveSphereStageInitialized ?? null,
-
-              viewers:
-                  document.querySelectorAll(".viewer").length,
-
-              canvases:
-                  document.querySelectorAll("canvas").length,
-
-              audio:
-                  document.querySelectorAll("audio").length
-
-          }))()
-          """
-
-          result2 = command(
-              "Runtime.evaluate",
-              {
-                  "expression": expression2,
-                  "returnByValue": True,
-                  "awaitPromise": True
-              }
-          )
-
-          print("========================================")
-          print("JAVASCRIPT RESULT AFTER 5 SECONDS")
-          print("========================================")
-
-          print(
-              json.dumps(
-                  result2,
-                  indent=2
-              )
-          )
-
-          ws.close()
-          PY
-
-          python3 /tmp/test_js.py
-
-      # =========================================================
-      # 10. FORCE ACTIVE PAGE LIFECYCLE
-      # =========================================================
-      - name: Keep Chrome page active
-        run: |
-          set -eux
-
-          cat >/tmp/activate_page.py <<'PY'
-          import json
-          import time
-          import websocket
+          import sys
 
           url = open("/tmp/debug_url").read().strip()
 
           ws = websocket.create_connection(
               url,
-              timeout=15
+              timeout=20
           )
 
           command_id = 0
+
+          console_messages = []
+          exceptions = []
 
           def command(method, params=None):
 
@@ -531,164 +307,439 @@ jobs:
 
                   response = json.loads(ws.recv())
 
+                  if "method" in response:
+
+                      if response["method"] == "Runtime.consoleAPICalled":
+                          console_messages.append(response)
+
+                      if response["method"] == "Runtime.exceptionThrown":
+                          exceptions.append(response)
+
                   if response.get("id") == command_id:
                       return response
 
+          # -----------------------------------------------------
+          # Enable DevTools domains
+          # -----------------------------------------------------
+
+          command("Runtime.enable")
+          command("Page.enable")
+          command("Log.enable")
+
+          # -----------------------------------------------------
+          # Make Chrome treat page as active
+          # -----------------------------------------------------
+
+          command(
+              "Page.setWebLifecycleState",
+              {
+                  "state": "active"
+              }
+          )
+
+          command(
+              "Emulation.setFocusEmulationEnabled",
+              {
+                  "enabled": True
+              }
+          )
+
+          # -----------------------------------------------------
+          # First JS test
+          # -----------------------------------------------------
+
+          test_expression = r"""
+          (() => {
+
+              const result = {};
+
+              result.javascript =
+                  true;
+
+              result.timestamp =
+                  Date.now();
+
+              result.url =
+                  location.href;
+
+              result.readyState =
+                  document.readyState;
+
+              result.visibilityState =
+                  document.visibilityState;
+
+              result.hidden =
+                  document.hidden;
+
+              result.requestAnimationFrame =
+                  typeof requestAnimationFrame === "function";
+
+              result.performance =
+                  typeof performance !== "undefined";
+
+              result.scripts =
+                  document.scripts.length;
+
+              result.styles =
+                  document.styleSheets.length;
+
+              result.canvasCount =
+                  document.querySelectorAll("canvas").length;
+
+              result.viewerCount =
+                  document.querySelectorAll(".viewer").length;
+
+              result.audioCount =
+                  document.querySelectorAll("audio").length;
+
+              result.videoCount =
+                  document.querySelectorAll("video").length;
+
+              result.engineRunning =
+                  window.__LiveSphereEngineRunning ?? null;
+
+              result.frameCounter =
+                  window.__LiveSphereFrameCounter ?? null;
+
+              result.stageInitialized =
+                  window.__LiveSphereStageInitialized ?? null;
+
+              return result;
+
+          })()
+          """
+
+          first = command(
+              "Runtime.evaluate",
+              {
+                  "expression": test_expression,
+                  "returnByValue": True,
+                  "awaitPromise": True
+              }
+          )
+
+          print("")
+          print("========================================")
+          print("INITIAL JAVASCRIPT STATE")
+          print("========================================")
           print(
-              command(
-                  "Page.setWebLifecycleState",
-                  {
-                      "state": "active"
-                  }
+              json.dumps(
+                  first,
+                  indent=2
               )
           )
 
+          # -----------------------------------------------------
+          # Wait
+          # -----------------------------------------------------
+
+          print("")
+          print("Waiting 5 seconds for animation frames...")
+
+          time.sleep(5)
+
+          # -----------------------------------------------------
+          # Second JS test
+          # -----------------------------------------------------
+
+          second_expression = r"""
+          (() => {
+
+              return {
+
+                  javascript:
+                      true,
+
+                  timestamp:
+                      Date.now(),
+
+                  readyState:
+                      document.readyState,
+
+                  visibilityState:
+                      document.visibilityState,
+
+                  hidden:
+                      document.hidden,
+
+                  engineRunning:
+                      window.__LiveSphereEngineRunning ?? null,
+
+                  frameCounter:
+                      window.__LiveSphereFrameCounter ?? null,
+
+                  stageInitialized:
+                      window.__LiveSphereStageInitialized ?? null,
+
+                  canvasCount:
+                      document.querySelectorAll("canvas").length,
+
+                  viewerCount:
+                      document.querySelectorAll(".viewer").length,
+
+                  audioCount:
+                      document.querySelectorAll("audio").length
+
+              };
+
+          })()
+          """
+
+          second = command(
+              "Runtime.evaluate",
+              {
+                  "expression": second_expression,
+                  "returnByValue": True,
+                  "awaitPromise": True
+              }
+          )
+
+          print("")
+          print("========================================")
+          print("JAVASCRIPT STATE AFTER 5 SECONDS")
+          print("========================================")
           print(
-              command(
-                  "Emulation.setFocusEmulationEnabled",
-                  {
-                      "enabled": True
-                  }
+              json.dumps(
+                  second,
+                  indent=2
               )
           )
 
+          # -----------------------------------------------------
+          # Check requestAnimationFrame directly
+          # -----------------------------------------------------
+
+          raf_expression = r"""
+          new Promise(resolve => {
+
+              const start =
+                  performance.now();
+
+              requestAnimationFrame(() => {
+
+                  resolve({
+                      rafExecuted: true,
+                      elapsed:
+                          performance.now() - start
+                  });
+
+              });
+
+          })
+          """
+
+          raf = command(
+              "Runtime.evaluate",
+              {
+                  "expression": raf_expression,
+                  "returnByValue": True,
+                  "awaitPromise": True
+              }
+          )
+
+          print("")
+          print("========================================")
+          print("REQUESTANIMATIONFRAME TEST")
+          print("========================================")
           print(
-              command(
-                  "Runtime.evaluate",
-                  {
-                      "expression": """
-                      (() => ({
-                          visibility: document.visibilityState,
-                          hidden: document.hidden,
-                          hasRAF:
-                              typeof requestAnimationFrame === "function"
-                      }))()
-                      """,
-                      "returnByValue": True
-                  }
+              json.dumps(
+                  raf,
+                  indent=2
+              )
+          )
+
+          # -----------------------------------------------------
+          # Check common JS errors
+          # -----------------------------------------------------
+
+          errors_expression = r"""
+          (() => {
+
+              return {
+
+                  errorCount:
+                      window.__githubErrorCount ?? null,
+
+                  bodyTextLength:
+                      document.body
+                          ? document.body.innerText.length
+                          : 0,
+
+                  bodyHTMLLength:
+                      document.body
+                          ? document.body.innerHTML.length
+                          : 0
+
+              };
+
+          })()
+          """
+
+          errors = command(
+              "Runtime.evaluate",
+              {
+                  "expression": errors_expression,
+                  "returnByValue": True
+              }
+          )
+
+          print("")
+          print("========================================")
+          print("PAGE ERROR / DOM TEST")
+          print("========================================")
+          print(
+              json.dumps(
+                  errors,
+                  indent=2
+              )
+          )
+
+          print("")
+          print("========================================")
+          print("DEVTOOLS EXCEPTIONS")
+          print("========================================")
+
+          print(
+              json.dumps(
+                  exceptions,
+                  indent=2
               )
           )
 
           ws.close()
           PY
 
-          python3 /tmp/activate_page.py
+          python3 /tmp/browser_diagnostic.py \
+            2>&1 \
+            | tee /tmp/browser-diagnostic.log
 
       # =========================================================
-      # 11. WARM UP WEBSITE
+      # 10. CAPTURE FIRST SCREEN
       # =========================================================
-      - name: Warm up renderer
+      - name: Capture first renderer frame
         run: |
           set -eux
 
           export DISPLAY=:99
 
-          echo "Giving JavaScript renderer time to run..."
+          import \
+            -display :99 \
+            -window root \
+            /tmp/frame-01.png
 
-          sleep 20
-
-          echo "Chrome processes:"
-
-          pgrep -a chrome || true
-
-          echo "Display:"
-
-          xdpyinfo -display :99 | grep dimensions
+          identify /tmp/frame-01.png
 
       # =========================================================
-      # 12. CAPTURE TWO FRAMES
+      # 11. WAIT FOR ANIMATION
       # =========================================================
-      - name: Capture diagnostic frames
+      - name: Wait for visual animation
         run: |
           set -eux
 
           export DISPLAY=:99
 
-          echo "Capturing frame 1..."
+          echo "Waiting 8 seconds..."
+
+          sleep 8
+
+      # =========================================================
+      # 12. CAPTURE SECOND SCREEN
+      # =========================================================
+      - name: Capture second renderer frame
+        run: |
+          set -eux
+
+          export DISPLAY=:99
 
           import \
             -display :99 \
             -window root \
-            /tmp/webpage-before.png
+            /tmp/frame-02.png
 
-          sleep 3
+          identify /tmp/frame-02.png
 
-          echo "Capturing frame 2..."
+      # =========================================================
+      # 13. COMPARE ACTUAL RENDERED FRAMES
+      # =========================================================
+      - name: Compare rendered frames
+        run: |
+          set -eux
 
-          import \
-            -display :99 \
-            -window root \
-            /tmp/webpage-after.png
+          echo "========================================"
+          echo "COMPARING RENDERED FRAMES"
+          echo "========================================"
 
-          echo "Images:"
+          COMPARE_OUTPUT=$(
+            compare \
+              -metric AE \
+              /tmp/frame-01.png \
+              /tmp/frame-02.png \
+              /tmp/frame-difference.png \
+              2>&1 || true
+          )
+
+          echo "Pixel difference:"
+          echo "$COMPARE_OUTPUT"
+
+          echo "Creating difference statistics..."
 
           identify \
-            /tmp/webpage-before.png \
-            /tmp/webpage-after.png
+            /tmp/frame-difference.png \
+            || true
+
+          echo "Frame comparison completed."
 
       # =========================================================
-      # 13. UPLOAD DIAGNOSTICS
+      # 14. UPLOAD ALL DIAGNOSTICS
       # =========================================================
       - name: Upload renderer diagnostics
         uses: actions/upload-artifact@v4
         with:
           name: renderer-diagnostics
           path: |
-            /tmp/webpage-before.png
-            /tmp/webpage-after.png
+            /tmp/frame-01.png
+            /tmp/frame-02.png
+            /tmp/frame-difference.png
+            /tmp/browser-diagnostic.log
             /tmp/chrome.log
             /tmp/xvfb.log
             /tmp/openbox.log
-          if-no-files-found: error
+            /tmp/audio-test.log
+          if-no-files-found: warn
 
       # =========================================================
-      # 14. VERIFY AUDIO
+      # 15. AUDIO TEST
       # =========================================================
-      - name: Verify audio pipeline
+      - name: Test audio monitor
         run: |
           set -eux
 
           echo "========================================"
-          echo "PULSEAUDIO SINKS"
+          echo "AUDIO DEVICES"
           echo "========================================"
 
           pactl list short sinks
-
-          echo "========================================"
-          echo "PULSEAUDIO SOURCES"
-          echo "========================================"
-
           pactl list short sources
 
           echo "========================================"
-          echo "DEFAULT SINK"
+          echo "AUDIO MONITOR TEST"
           echo "========================================"
 
-          pactl get-default-sink
-
-          echo "========================================"
-          echo "AUDIO LEVEL TEST"
-          echo "========================================"
-
-          timeout 5 ffmpeg \
-            -hide_banner \
-            -loglevel info \
-            -f pulse \
-            -i TikTokSink.monitor \
-            -af volumedetect \
-            -f null \
-            - \
-            2>&1 \
-            | tee /tmp/audio-test.log || true
-
-          echo "========================================"
-          echo "AUDIO TEST RESULT"
-          echo "========================================"
-
-          cat /tmp/audio-test.log || true
+          timeout 5 \
+            ffmpeg \
+              -hide_banner \
+              -loglevel info \
+              -f pulse \
+              -i TikTokSink.monitor \
+              -af volumedetect \
+              -f null \
+              - \
+              2>&1 \
+            | tee /tmp/audio-test.log \
+            || true
 
       # =========================================================
-      # 15. FINAL RESTREAM
+      # 16. FINAL RESTREAM
       # =========================================================
       - name: Stream to Restream
         run: |
@@ -712,12 +763,10 @@ jobs:
           echo "Duration: 3 minutes"
           echo "========================================"
 
-          echo "Checking display..."
-
+          echo "Display:"
           xdpyinfo -display :99 | grep dimensions
 
-          echo "Checking audio..."
-
+          echo "Audio:"
           pactl list short sources | grep "TikTokSink.monitor"
 
           echo "Starting FFmpeg..."
@@ -758,7 +807,6 @@ jobs:
             -ac 2 \
             \
             -t 180 \
-            \
             -f flv \
             "$TARGET"
 ```
