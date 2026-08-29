@@ -1,4 +1,4 @@
-name: TikTok 30-Minute LiveSphere Stream
+name: LiveSphere TikTok 30 Minute Stream
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ jobs:
 
     steps:
 
-      - name: Install dependencies
+      - name: Install streaming software
         run: |
-          set -eux
+          set -euxo pipefail
 
           sudo apt-get update
 
@@ -22,23 +22,22 @@ jobs:
             xdotool \
             pulseaudio \
             pulseaudio-utils \
-            wget \
-            wmctrl
+            wget
 
       - name: Install Google Chrome
         run: |
-          set -eux
+          set -euxo pipefail
 
-          wget -O /tmp/google-chrome.deb \
+          wget -O /tmp/chrome.deb \
             https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 
-          sudo apt-get install -y /tmp/google-chrome.deb
+          sudo apt-get install -y /tmp/chrome.deb
 
           google-chrome --version
 
-      - name: Start portrait display
+      - name: Start TikTok portrait display
         run: |
-          set -eux
+          set -euxo pipefail
 
           export DISPLAY=:99
 
@@ -54,12 +53,11 @@ jobs:
 
           sleep 4
 
-          echo "Display:"
           xdpyinfo | grep dimensions
 
-      - name: Start virtual audio
+      - name: Start audio system
         run: |
-          set -eux
+          set -euxo pipefail
 
           pulseaudio \
             --start \
@@ -69,18 +67,20 @@ jobs:
 
           pactl load-module \
             module-null-sink \
-            sink_name=TikTokSink \
-            sink_properties=device.description=TikTokSink
+            sink_name=TikTokAudio \
+            sink_properties=device.description=TikTokAudio
 
-          pactl set-default-sink TikTokSink
+          pactl set-default-sink TikTokAudio
 
-          echo "Audio devices:"
+          echo "Audio sinks:"
           pactl list short sinks
+
+          echo "Audio sources:"
           pactl list short sources
 
-      - name: Launch LiveSphere webpage
+      - name: Open LiveSphere
         run: |
-          set -eux
+          set -euxo pipefail
 
           export DISPLAY=:99
 
@@ -91,101 +91,67 @@ jobs:
             --disable-software-rasterizer \
             --disable-infobars \
             --disable-notifications \
-            --start-maximized \
+            --disable-session-crashed-bubble \
+            --autoplay-policy=no-user-gesture-required \
+            --start-fullscreen \
+            --kiosk \
             --window-size=1080,1920 \
             --window-position=0,0 \
-            --autoplay-policy=no-user-gesture-required \
-            --user-data-dir=/tmp/livesphere-chrome \
+            --force-device-scale-factor=1 \
+            --user-data-dir=/tmp/livesphere-profile \
             "https://livespherev3.gamer.gd/?i=1" \
             > /tmp/chrome.log 2>&1 &
 
           echo $! > /tmp/chrome.pid
 
-          echo "Waiting for LiveSphere..."
+          echo "Waiting for LiveSphere to load..."
+          sleep 15
 
-          sleep 12
+          echo "Chrome processes:"
+          pgrep -a chrome || true
 
-          echo "Chrome windows:"
-          xdotool search --onlyvisible --name ".*" getwindowname %@ || true
-
-          # Find Chrome's window and force it to fill
-          # the complete 1080x1920 portrait display.
-          WINDOW=$(xdotool search \
-            --onlyvisible \
-            --class "google-chrome" \
-            2>/dev/null | head -n 1 || true)
-
-          if [ -n "$WINDOW" ]; then
-            echo "Chrome window: $WINDOW"
-
-            xdotool windowactivate "$WINDOW"
-
-            xdotool windowmove "$WINDOW" 0 0
-
-            xdotool windowsize "$WINDOW" 1080 1920
-
-            sleep 3
-          else
-            echo "Chrome window was not found."
-          fi
-
-      - name: Trigger webpage audio
+      - name: Trigger LiveSphere sound
         run: |
-          set -eux
+          set -euxo pipefail
 
           export DISPLAY=:99
 
-          sleep 3
+          echo "Triggering webpage interaction..."
 
-          # Click the centre of the portrait page.
-          # This is the interaction that should unlock
-          # the webpage's sound.
+          # Click the centre of the 1080x1920 portrait screen.
           xdotool mousemove 540 960
           xdotool click 1
 
-          echo "Initial webpage click completed."
-
           sleep 5
 
-          echo "Audio sources after click:"
+          echo "Chrome audio connections:"
           pactl list short sink-inputs || true
 
-      - name: Capture diagnostic screenshot
-        run: |
-          set -eux
-
-          export DISPLAY=:99
-
-          # Save a frame from the exact display FFmpeg will stream.
-          ffmpeg \
-            -y \
-            -f x11grab \
-            -video_size 1080x1920 \
-            -i :99.0 \
-            -frames:v 1 \
-            /tmp/livesphere-preview.png
-
-          echo "Preview captured."
-
-      - name: Stream LiveSphere to Restream
+      - name: Start 30 minute TikTok stream
         run: |
           set -euo pipefail
 
+          # --------------------------------------------
+          # RESTREAM
+          # --------------------------------------------
           RESTREAM_URL="rtmp://london.restream.io/live"
 
-          # Put your Restream key here.
-          RESTREAM_KEY="re_12262857_evente47de205e30c4d77b54e519cc0709736"
+          # Put the NEW Restream key here.
+          RESTREAM_KEY="re_12262857_eventb998ec2e79c64f8e978759c2b52fe02c"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
 
-          echo "========================================"
-          echo "LIVE SPHERE STREAM"
-          echo "========================================"
-          echo "Resolution: 1080x1920"
-          echo "Frame rate: 30 FPS"
-          echo "Duration: 30 minutes"
-          echo "Destination: $RESTREAM_URL"
-          echo "========================================"
+          echo "=============================================="
+          echo "      LIVE SPHERE TIKTOK STREAM"
+          echo "=============================================="
+          echo "Resolution : 1080x1920"
+          echo "Orientation: Portrait 9:16"
+          echo "Frame rate : 30 FPS"
+          echo "Duration   : 30 MINUTES"
+          echo "Audio      : PulseAudio"
+          echo "Website    : LiveSphere"
+          echo "Destination: London Restream RTMP"
+          echo "=============================================="
 
           ffmpeg \
             -hide_banner \
@@ -196,7 +162,7 @@ jobs:
             -draw_mouse 0 \
             -i :99.0 \
             -f pulse \
-            -i TikTokSink.monitor \
+            -i TikTokAudio.monitor \
             -map 0:v:0 \
             -map 1:a:0 \
             -c:v libx264 \
