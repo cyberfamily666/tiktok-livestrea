@@ -1,4 +1,4 @@
-name: TikTok 30-Minute Restream Test
+name: TikTok 30-Minute LiveSphere Stream
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ jobs:
     timeout-minutes: 35
 
     steps:
+
       - name: Install dependencies
         run: |
           set -eux
@@ -21,20 +22,21 @@ jobs:
             xdotool \
             pulseaudio \
             pulseaudio-utils \
-            wget
+            wget \
+            wmctrl
 
       - name: Install Google Chrome
         run: |
           set -eux
 
-          wget -O /tmp/chrome.deb \
+          wget -O /tmp/google-chrome.deb \
             https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 
-          sudo apt-get install -y /tmp/chrome.deb
+          sudo apt-get install -y /tmp/google-chrome.deb
 
           google-chrome --version
 
-      - name: Start virtual display
+      - name: Start portrait display
         run: |
           set -eux
 
@@ -45,9 +47,15 @@ jobs:
             -ac \
             +extension GLX \
             +render \
-            -noreset &
+            -noreset \
+            > /tmp/xvfb.log 2>&1 &
+
+          echo $! > /tmp/xvfb.pid
 
           sleep 4
+
+          echo "Display:"
+          xdpyinfo | grep dimensions
 
       - name: Start virtual audio
         run: |
@@ -66,10 +74,11 @@ jobs:
 
           pactl set-default-sink TikTokSink
 
+          echo "Audio devices:"
           pactl list short sinks
           pactl list short sources
 
-      - name: Launch webpage
+      - name: Launch LiveSphere webpage
         run: |
           set -eux
 
@@ -80,33 +89,103 @@ jobs:
             --disable-gpu \
             --disable-dev-shm-usage \
             --disable-software-rasterizer \
+            --disable-infobars \
+            --disable-notifications \
+            --start-maximized \
             --window-size=1080,1920 \
             --window-position=0,0 \
             --autoplay-policy=no-user-gesture-required \
-            --user-data-dir=/tmp/chrome-profile \
-            "https://gamer.gd" &
+            --user-data-dir=/tmp/livesphere-chrome \
+            "https://livespherev3.gamer.gd/?i=1" \
+            > /tmp/chrome.log 2>&1 &
+
+          echo $! > /tmp/chrome.pid
+
+          echo "Waiting for LiveSphere..."
 
           sleep 12
 
-          xdotool mousemove 540 960
-          xdotool click 1
+          echo "Chrome windows:"
+          xdotool search --onlyvisible --name ".*" getwindowname %@ || true
+
+          # Find Chrome's window and force it to fill
+          # the complete 1080x1920 portrait display.
+          WINDOW=$(xdotool search \
+            --onlyvisible \
+            --class "google-chrome" \
+            2>/dev/null | head -n 1 || true)
+
+          if [ -n "$WINDOW" ]; then
+            echo "Chrome window: $WINDOW"
+
+            xdotool windowactivate "$WINDOW"
+
+            xdotool windowmove "$WINDOW" 0 0
+
+            xdotool windowsize "$WINDOW" 1080 1920
+
+            sleep 3
+          else
+            echo "Chrome window was not found."
+          fi
+
+      - name: Trigger webpage audio
+        run: |
+          set -eux
+
+          export DISPLAY=:99
 
           sleep 3
 
-      - name: Stream to Restream
+          # Click the centre of the portrait page.
+          # This is the interaction that should unlock
+          # the webpage's sound.
+          xdotool mousemove 540 960
+          xdotool click 1
+
+          echo "Initial webpage click completed."
+
+          sleep 5
+
+          echo "Audio sources after click:"
+          pactl list short sink-inputs || true
+
+      - name: Capture diagnostic screenshot
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          # Save a frame from the exact display FFmpeg will stream.
+          ffmpeg \
+            -y \
+            -f x11grab \
+            -video_size 1080x1920 \
+            -i :99.0 \
+            -frames:v 1 \
+            /tmp/livesphere-preview.png
+
+          echo "Preview captured."
+
+      - name: Stream LiveSphere to Restream
         run: |
           set -euo pipefail
 
-          # Restream RTMP server
           RESTREAM_URL="rtmp://london.restream.io/live"
 
-          # PUT YOUR RESTREAM KEY ON THIS LINE
-          RESTREAM_KEY="re_12262857_evente47de205e30c4d77b54e519cc0709736"
+          # Put your Restream key here.
+          RESTREAM_KEY="YOUR_RESTREAM_KEY"
 
           TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
 
-          echo "Starting 1080x1920 vertical stream..."
+          echo "========================================"
+          echo "LIVE SPHERE STREAM"
+          echo "========================================"
+          echo "Resolution: 1080x1920"
+          echo "Frame rate: 30 FPS"
           echo "Duration: 30 minutes"
+          echo "Destination: $RESTREAM_URL"
+          echo "========================================"
 
           ffmpeg \
             -hide_banner \
@@ -138,3 +217,10 @@ jobs:
             -t 1800 \
             -f flv \
             "$TARGET"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kill "$(cat /tmp/chrome.pid)" 2>/dev/null || true
+          kill "$(cat /tmp/xvfb.pid)" 2>/dev/null || true
+          pulseaudio --kill 2>/dev/null || true
