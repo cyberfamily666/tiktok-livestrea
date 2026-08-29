@@ -1,0 +1,140 @@
+name: TikTok 30-Minute Restream Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Install dependencies
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            ffmpeg \
+            xvfb \
+            xdotool \
+            pulseaudio \
+            pulseaudio-utils \
+            wget
+
+      - name: Install Google Chrome
+        run: |
+          set -eux
+
+          wget -O /tmp/chrome.deb \
+            https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+
+          sudo apt-get install -y /tmp/chrome.deb
+
+          google-chrome --version
+
+      - name: Start virtual display
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          Xvfb :99 \
+            -screen 0 1080x1920x24 \
+            -ac \
+            +extension GLX \
+            +render \
+            -noreset &
+
+          sleep 4
+
+      - name: Start virtual audio
+        run: |
+          set -eux
+
+          pulseaudio \
+            --start \
+            --exit-idle-time=-1
+
+          sleep 3
+
+          pactl load-module \
+            module-null-sink \
+            sink_name=TikTokSink \
+            sink_properties=device.description=TikTokSink
+
+          pactl set-default-sink TikTokSink
+
+          pactl list short sinks
+          pactl list short sources
+
+      - name: Launch webpage
+        run: |
+          set -eux
+
+          export DISPLAY=:99
+
+          google-chrome \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --disable-software-rasterizer \
+            --window-size=1080,1920 \
+            --window-position=0,0 \
+            --autoplay-policy=no-user-gesture-required \
+            --user-data-dir=/tmp/chrome-profile \
+            "https://gamer.gd" &
+
+          sleep 12
+
+          xdotool mousemove 540 960
+          xdotool click 1
+
+          sleep 3
+
+      - name: Stream to Restream
+        run: |
+          set -euo pipefail
+
+          # Restream RTMP server
+          RESTREAM_URL="rtmp://london.restream.io/live"
+
+          # PUT YOUR RESTREAM KEY ON THIS LINE
+          RESTREAM_KEY="re_12262857_evente47de205e30c4d77b54e519cc0709736"
+
+          TARGET="${RESTREAM_URL%/}/${RESTREAM_KEY}"
+
+          echo "Starting 1080x1920 vertical stream..."
+          echo "Duration: 30 minutes"
+
+          ffmpeg \
+            -hide_banner \
+            -loglevel info \
+            -f x11grab \
+            -video_size 1080x1920 \
+            -framerate 30 \
+            -draw_mouse 0 \
+            -i :99.0 \
+            -f pulse \
+            -i TikTokSink.monitor \
+            -map 0:v:0 \
+            -map 1:a:0 \
+            -c:v libx264 \
+            -preset ultrafast \
+            -tune zerolatency \
+            -pix_fmt yuv420p \
+            -r 30 \
+            -b:v 2500k \
+            -maxrate 3000k \
+            -bufsize 6000k \
+            -g 60 \
+            -keyint_min 60 \
+            -sc_threshold 0 \
+            -c:a aac \
+            -b:a 128k \
+            -ar 44100 \
+            -ac 2 \
+            -t 1800 \
+            -f flv \
+            "$TARGET"
